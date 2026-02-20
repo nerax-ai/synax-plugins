@@ -1,0 +1,25 @@
+{
+  "name": "@synax-ai/endpoint-anthropic",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "rm -rf dist tsconfig.tsbuildinfo && tsc",
+    "dev": "tsc --watch",
+    "lint": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@synax-ai/sdk": "link:@synax-ai/sdk"
+  },
+  "devDependencies": {
+    "bun-types": "^1.3.9"
+  }
+}

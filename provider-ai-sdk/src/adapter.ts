@@ -5,23 +5,20 @@ import type {
   LanguageStreamPart,
   LanguageMessage,
   LanguageTool,
-  LanguageToolResultOutput,
   FinishReason,
   LanguageTokenUsage,
   LanguageMessagePart,
 } from '@synax-ai/sdk';
 
-function toolResultValue(result: LanguageToolResultOutput): unknown {
-  if (result.type === 'text' || result.type === 'error-text') return result.value;
-  if (result.type === 'json' || result.type === 'error-json') return result.value;
-  if (result.type === 'execution-denied') return { denied: true, reason: result.reason };
-  return result;
+function toSystem(messages: LanguageMessage[]): string | undefined {
+  const parts = messages.filter(m => m.role === 'system').map(m =>
+    typeof m.content === 'string' ? m.content : (m.content as any[]).map((p: any) => p.text).join('\n\n')
+  );
+  return parts.length ? parts.join('\n\n') : undefined;
 }
 
 function toMessages(messages: LanguageMessage[]): unknown[] {
-  return messages.map((msg) => {
-    if (msg.role === 'system') return { role: 'system', content: msg.content };
-
+  return messages.filter(m => m.role !== 'system').map((msg) => {
     if (msg.role === 'user') {
       if (typeof msg.content === 'string') return { role: 'user', content: msg.content };
       return {
@@ -41,7 +38,17 @@ function toMessages(messages: LanguageMessage[]): unknown[] {
         content: msg.content.flatMap((p): any[] => {
           if (p.type === 'text') return [{ type: 'text', text: p.text }];
           if (p.type === 'reasoning') return [{ type: 'reasoning', text: p.reasoning, signature: p.signature }];
-          if (p.type === 'tool-call') return [{ type: 'tool-call', toolCallId: p.toolCallId, toolName: p.toolName, args: p.input }];
+          if (p.type === 'tool-call') {
+            let parsedArgs = p.input;
+            if (typeof p.input === 'string') {
+              try {
+                parsedArgs = p.input.trim() ? JSON.parse(p.input) : {};
+              } catch (e) {
+                parsedArgs = {};
+              }
+            }
+            return [{ type: 'tool-call', toolCallId: p.toolCallId, toolName: p.toolName, args: parsedArgs, input: parsedArgs }];
+          }
           return [];
         }),
       };
@@ -57,7 +64,7 @@ function toMessages(messages: LanguageMessage[]): unknown[] {
             type: 'tool-result',
             toolCallId: p.toolCallId,
             toolName: p.toolName,
-            result: toolResultValue(p.result),
+            result: p.result,
             isError: p.isError,
           };
         }),
@@ -69,9 +76,14 @@ function toTools(core: AiSdkCore, tools: LanguageTool[]): Record<string, unknown
   const result: Record<string, unknown> = {};
   for (const tool of tools) {
     if (tool.type !== 'function') continue;
+    
+    const schema = tool.inputSchema && Object.keys(tool.inputSchema).length > 0
+      ? core.jsonSchema(tool.inputSchema)
+      : core.jsonSchema({ type: 'object', properties: {} });
+
     result[tool.name] = {
       description: tool.description,
-      parameters: core.jsonSchema(tool.inputSchema ?? { type: 'object', properties: {} }),
+      parameters: schema,
     };
   }
   return result;
@@ -85,14 +97,31 @@ function toFinishReason(reason: string): FinishReason {
   return map[reason] ?? 'other';
 }
 
-function toUsage(usage?: { promptTokens?: number; completionTokens?: number }): LanguageTokenUsage {
+function toUsage(usage?: { promptTokens?: number; completionTokens?: number; inputTokens?: number; outputTokens?: number }): LanguageTokenUsage {
   return {
-    inputTokens: { total: usage?.promptTokens, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
-    outputTokens: { total: usage?.completionTokens, reasoning: undefined },
+    inputTokens: { total: usage?.inputTokens ?? usage?.promptTokens, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
+    outputTokens: { total: usage?.outputTokens ?? usage?.completionTokens, reasoning: undefined },
   };
 }
 
 function buildOptions(core: AiSdkCore, request: LanguageRequest) {
+  const tools = request.tools?.length ? toTools(core, request.tools) : undefined;
+  if (tools) {
+    console.log(`[adapter] tools: ${Object.keys(tools).join(', ')}`);
+  }
+  
+  let toolChoice: any = undefined;
+  if (request.toolChoice) {
+    if (typeof request.toolChoice === 'string') {
+      toolChoice = request.toolChoice;
+    } else if (typeof request.toolChoice === 'object' && request.toolChoice.type === 'function') {
+      toolChoice = {
+        type: 'tool',
+        toolName: request.toolChoice.function.name,
+      };
+    }
+  }
+
   return {
     maxTokens: request.maxOutputTokens,
     temperature: request.temperature,
@@ -102,20 +131,22 @@ function buildOptions(core: AiSdkCore, request: LanguageRequest) {
     frequencyPenalty: request.frequencyPenalty,
     stopSequences: request.stopSequences,
     seed: request.seed,
-    tools: request.tools?.length ? toTools(core, request.tools) : undefined,
-    toolChoice: request.toolChoice as any,
+    tools,
+    toolChoice,
     abortSignal: request.abortSignal,
   };
 }
 
 export async function generate(core: AiSdkCore, model: unknown, request: LanguageRequest): Promise<LanguageResponse> {
-  const result = await core.generateText({ model, messages: toMessages(request.messages), ...buildOptions(core, request) });
+  const system = toSystem(request.messages);
+  const messages = toMessages(request.messages);
+  const result = await core.generateText({ model, system, messages, ...buildOptions(core, request) });
 
   const content: LanguageMessagePart[] = [];
   if (result.reasoning?.length) content.push({ type: 'reasoning', reasoning: result.reasoning });
   if (result.text) content.push({ type: 'text', text: result.text });
   for (const tc of result.toolCalls ?? []) {
-    content.push({ type: 'tool-call', toolCallId: tc.toolCallId, toolName: tc.toolName, input: tc.args });
+    content.push({ type: 'tool-call', toolCallId: tc.toolCallId, toolName: tc.toolName, input: tc.input ?? tc.args });
   }
 
   return {
@@ -135,36 +166,94 @@ export async function generate(core: AiSdkCore, model: unknown, request: Languag
 }
 
 export async function* stream(core: AiSdkCore, model: unknown, request: LanguageRequest): AsyncGenerator<LanguageStreamPart> {
-  const result = core.streamText({ model, messages: toMessages(request.messages), ...buildOptions(core, request) });
+  const system = toSystem(request.messages);
+  const messages = toMessages(request.messages);
+  const result = core.streamText({ model, system, messages, ...buildOptions(core, request) });
 
   yield { type: 'stream-start' };
 
   let textId: string | null = null;
   let reasoningId: string | null = null;
+  const startedToolCalls = new Set<string>();
+  const endedToolCalls = new Set<string>();
 
   for await (const part of result.fullStream) {
     switch (part.type) {
       case 'text-delta':
         if (!textId) { textId = crypto.randomUUID(); yield { type: 'text-start', id: textId }; }
-        yield { type: 'text-delta', id: textId, delta: part.textDelta };
+        yield { type: 'text-delta', id: textId, delta: part.text ?? part.textDelta ?? '' };
         break;
       case 'reasoning':
         if (!reasoningId) { reasoningId = crypto.randomUUID(); yield { type: 'reasoning-start', id: reasoningId }; }
-        yield { type: 'reasoning-delta', id: reasoningId, delta: part.textDelta };
+        yield { type: 'reasoning-delta', id: reasoningId, delta: part.text ?? part.textDelta ?? '' };
         break;
-      case 'tool-call-streaming-start':
+      case 'tool-input-start': {
+        const p = part as any;
+        const callId = p.id ?? p.toolCallId;
+        if (startedToolCalls.has(callId)) break;
         if (textId) { yield { type: 'text-end', id: textId }; textId = null; }
-        yield { type: 'tool-input-start', id: part.toolCallId, toolName: part.toolName };
+        yield { type: 'tool-input-start', id: callId, toolName: p.toolName };
+        startedToolCalls.add(callId);
         break;
-      case 'tool-call-delta':
-        yield { type: 'tool-input-delta', id: part.toolCallId, delta: part.argsTextDelta };
+      }
+      case 'tool-input-delta': {
+        const p = part as any;
+        const callId = p.id ?? p.toolCallId;
+        if (endedToolCalls.has(callId)) break;
+        yield { type: 'tool-input-delta', id: callId, delta: p.delta ?? p.inputTextDelta ?? '' };
         break;
-      case 'tool-call':
+      }
+      case 'tool-input-end': {
+        const p = part as any;
+        const callId = p.id ?? p.toolCallId;
+        if (endedToolCalls.has(callId)) break;
+        yield { type: 'tool-input-end', id: callId };
+        endedToolCalls.add(callId);
+        break;
+      }
+      case 'tool-input-available': {
+        const p = part as any;
+        const callId = p.id ?? p.toolCallId;
+        if (endedToolCalls.has(callId)) break;
         if (textId) { yield { type: 'text-end', id: textId }; textId = null; }
-        yield { type: 'tool-input-start', id: part.toolCallId, toolName: part.toolName };
-        yield { type: 'tool-input-delta', id: part.toolCallId, delta: JSON.stringify(part.args) };
-        yield { type: 'tool-input-end', id: part.toolCallId };
+        if (!startedToolCalls.has(callId)) {
+          yield { type: 'tool-input-start', id: callId, toolName: p.toolName };
+          startedToolCalls.add(callId);
+          yield { type: 'tool-input-delta', id: callId, delta: JSON.stringify(p.input ?? p.args) };
+        }
+        yield { type: 'tool-input-end', id: callId };
+        endedToolCalls.add(callId);
         break;
+      }
+      // legacy fallback
+      case 'tool-call-streaming-start': {
+        const callId = (part as any).toolCallId;
+        if (startedToolCalls.has(callId)) break;
+        if (textId) { yield { type: 'text-end', id: textId }; textId = null; }
+        yield { type: 'tool-input-start', id: callId, toolName: (part as any).toolName };
+        startedToolCalls.add(callId);
+        break;
+      }
+      case 'tool-call-delta': {
+        const callId = (part as any).toolCallId;
+        if (endedToolCalls.has(callId)) break;
+        yield { type: 'tool-input-delta', id: callId, delta: (part as any).argsTextDelta };
+        break;
+      }
+      case 'tool-call': {
+        const p2 = part as any;
+        const callId = p2.id ?? p2.toolCallId;
+        if (endedToolCalls.has(callId)) break;
+        if (textId) { yield { type: 'text-end', id: textId }; textId = null; }
+        if (!startedToolCalls.has(callId)) {
+          yield { type: 'tool-input-start', id: callId, toolName: p2.toolName };
+          startedToolCalls.add(callId);
+          yield { type: 'tool-input-delta', id: callId, delta: JSON.stringify(p2.input ?? p2.args) };
+        }
+        yield { type: 'tool-input-end', id: callId };
+        endedToolCalls.add(callId);
+        break;
+      }
       case 'finish':
         if (textId) { yield { type: 'text-end', id: textId }; textId = null; }
         if (reasoningId) { yield { type: 'reasoning-end', id: reasoningId }; reasoningId = null; }

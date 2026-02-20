@@ -261,8 +261,7 @@ export async function* stream(core: AiSdkCore, model: unknown, request: Language
         yield { type: 'finish', finishReason: toFinishReason(part.finishReason), usage: toUsage(part.usage) };
         break;
       case 'error':
-        yield { type: 'error', error: part.error };
-        break;
+        throw part.error;
     }
   }
 }

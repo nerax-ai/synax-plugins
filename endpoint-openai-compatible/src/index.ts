@@ -129,8 +129,10 @@ function createOpenAIEndpoint(options: Record<string, unknown>): Endpoint {
                   }
                   controller.enqueue(enc.encode('data: [DONE]\n\n'));
                   controller.close();
-                } catch (e) {
-                  controller.error(e);
+                } catch (e: any) {
+                  const status = e?.statusCode ?? e?.status ?? 500;
+                  console.error(`[openai] stream error ${status}: ${e?.message ?? e}`);
+                  controller.close();
                 }
               },
             }),

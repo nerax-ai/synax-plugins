@@ -174,8 +174,10 @@ function createOpenAIResponsesEndpoint(options: Record<string, unknown>): Endpoi
                     if (line) controller.enqueue(enc.encode(line));
                   }
                   controller.close();
-                } catch (e) {
-                  controller.error(e);
+                } catch (e: any) {
+                  const status = e?.statusCode ?? e?.status ?? 500;
+                  console.error(`[openai-responses] stream error ${status}: ${e?.message ?? e}`);
+                  controller.close();
                 }
               },
             }),

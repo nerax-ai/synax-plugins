@@ -254,21 +254,7 @@ function createAnthropicEndpoint(options: Record<string, unknown>): Endpoint {
       app.post('/v1/messages', async (c: any) => {
         try {
           const body = await c.req.json();
-          const firstTool = body.tools?.[0];
-          const logEntry = {
-            timestamp: new Date().toISOString(),
-            model: body.model,
-            toolsCount: body.tools?.length ?? 0,
-            firstToolKeys: firstTool ? Object.keys(firstTool) : [],
-            firstToolName: firstTool?.name,
-            firstToolSchemaKeys: firstTool?.input_schema ? Object.keys(firstTool.input_schema) : [],
-            messages: body.messages,
-          };
-          const fs = await import('fs');
-          fs.appendFileSync('anthropic-debug.log', JSON.stringify(logEntry, null, 2) + '\n---\n');
-
           const req = decodeRequest(body);
-          fs.appendFileSync('anthropic-debug.log', `[decoded] tools[0]: ${JSON.stringify(req.tools?.[0])}\n---\n`);
 
           if (body.stream) {
             const signal: AbortSignal = c.req.raw.signal;

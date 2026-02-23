@@ -11,38 +11,26 @@ import type {
 // --- decode ---
 
 function decodeInput(input: any): LanguageMessage[] {
-  if (typeof input === 'string') {
-    return [{ role: 'user', content: input }];
-  }
+  if (typeof input === 'string') return [{ role: 'user', content: input }];
   if (!Array.isArray(input)) return [];
 
   return input.map((item: any): LanguageMessage => {
-    if (item.type === 'message' || item.role) {
-      const content = item.content;
-      if (typeof content === 'string') return { role: item.role, content } as LanguageMessage;
+    const { type, role, content, call_id, name, arguments: args, output } = item;
+    if (type === 'message' || role) {
+      if (typeof content === 'string') return { role, content } as LanguageMessage;
       if (Array.isArray(content)) {
         return {
-          role: item.role,
-          content: content.map((p: any) => {
-            if (p.type === 'input_text' || p.type === 'output_text') return { type: 'text' as const, text: p.text };
-            if (p.type === 'image_url') return { type: 'file' as const, data: new URL(p.image_url.url), mediaType: 'image/jpeg' };
-            return { type: 'text' as const, text: '' };
-          }),
+          role,
+          content: content.map((p: any) =>
+            (p.type === 'input_text' || p.type === 'output_text') ? { type: 'text', text: p.text } :
+            (p.type === 'image_url') ? { type: 'file', data: new URL(p.image_url.url), mediaType: 'image/jpeg' } :
+            { type: 'text', text: '' }
+          ),
         } as LanguageMessage;
       }
     }
-    if (item.type === 'function_call') {
-      return {
-        role: 'assistant',
-        content: [{ type: 'tool-call' as const, toolCallId: item.call_id, toolName: item.name, input: item.arguments }],
-      };
-    }
-    if (item.type === 'function_call_output') {
-      return {
-        role: 'tool',
-        content: [{ type: 'tool-result' as const, toolCallId: item.call_id, toolName: '', result: item.output ?? '' }],
-      };
-    }
+    if (type === 'function_call') return { role: 'assistant', content: [{ type: 'tool-call', toolCallId: call_id, toolName: name, input: args }] };
+    if (type === 'function_call_output') return { role: 'tool', content: [{ type: 'tool-result', toolCallId: call_id, toolName: '', result: output ?? '' }] };
     return { role: 'user', content: '' };
   });
 }

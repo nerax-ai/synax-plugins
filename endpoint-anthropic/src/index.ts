@@ -12,117 +12,85 @@ import type {
 // --- decode ---
 
 function decodeMessages(messages: any[]): LanguageMessage[] {
-  // Pre-assign stable IDs to tool_use blocks missing an id, keyed by [msgIdx, blockIdx]
-  // so the corresponding tool_result (also missing tool_use_id) can look up the same ID
   const missingIds = new Map<string, string>(); // `${msgIdx}:${blockIdx}` -> uuid
-  for (let i = 0; i < messages.length; i++) {
-    const m = messages[i];
-    if (m.role === 'assistant' && Array.isArray(m.content)) {
-      let bi = 0;
-      for (const p of m.content) {
-        if (p.type === 'tool_use' && !p.id) missingIds.set(`${i}:${bi}`, crypto.randomUUID());
-        if (p.type === 'tool_use') bi++;
-      }
-    }
-  }
-
-  // Build a lookup: for each user message with tool_results, map result index -> id
-  // by finding the preceding assistant message and matching by position
   const toolResultIds = new Map<string, string>(); // `${msgIdx}:${resultIdx}` -> id
-  for (let i = 0; i < messages.length; i++) {
-    const m = messages[i];
-    if (m.role === 'user' && Array.isArray(m.content)) {
-      const results = m.content.filter((p: any) => p.type === 'tool_result');
-      if (!results.length) continue;
-      // Find preceding assistant message
-      let prevAssistant = -1;
-      for (let j = i - 1; j >= 0; j--) {
-        if (messages[j].role === 'assistant') { prevAssistant = j; break; }
-      }
-      let ri = 0;
-      for (const r of results) {
-        if (!r.tool_use_id && prevAssistant >= 0) {
-          toolResultIds.set(`${i}:${ri}`, missingIds.get(`${prevAssistant}:${ri}`) ?? crypto.randomUUID());
-        }
-        ri++;
-      }
-    }
-  }
-
-  // Build toolCallId -> toolName mapping from assistant tool_use blocks
   const toolNameMap = new Map<string, string>();
-  for (let i = 0; i < messages.length; i++) {
-    const m = messages[i];
-    if (m.role === 'assistant' && Array.isArray(m.content)) {
-      let bi = 0;
-      for (const p of m.content) {
-        if (p.type === 'tool_use') {
-          const id = p.id ?? missingIds.get(`${i}:${bi}`);
-          if (id && p.name) toolNameMap.set(id, p.name);
-          bi++;
-        }
-      }
-    }
-  }
+  let lastAssIdx = -1;
 
-  const result: LanguageMessage[] = [];
   for (let i = 0; i < messages.length; i++) {
     const m = messages[i];
-    if (m.role === 'system') {
-      result.push({ role: 'system', content: m.content });
-      continue;
-    }
-    if (m.role === 'user') {
-      if (Array.isArray(m.content)) {
-        const toolResults = m.content.filter((p: any) => p.type === 'tool_result');
-        if (toolResults.length) {
-          result.push({
-            role: 'tool',
-            content: toolResults.map((p: any, ri: number) => {
-              const id = p.tool_use_id ?? toolResultIds.get(`${i}:${ri}`) ?? crypto.randomUUID();
-              return {
-                type: 'tool-result' as const,
-                toolCallId: id,
-                toolName: toolNameMap.get(id) ?? id,
-                result: Array.isArray(p.content) ? p.content.map((c: any) => c.text).join('') : (p.content ?? ''),
-                isError: p.is_error ?? false,
-              };
-            }),
-          });
-          continue;
-        }
-        result.push({
-          role: 'user',
-          content: m.content.map((p: any) => {
-            if (p.type === 'text') return { type: 'text' as const, text: p.text };
-            if (p.type === 'image') return { type: 'file' as const, data: p.source.url ?? p.source.data, mediaType: p.source.media_type ?? 'image/jpeg' };
-            return { type: 'text' as const, text: '' };
-          }),
-        });
-      } else {
-        result.push({ role: 'user', content: m.content ?? '' });
-      }
-      continue;
-    }
     if (m.role === 'assistant') {
+      lastAssIdx = i;
       if (Array.isArray(m.content)) {
         let bi = 0;
-        const content = m.content.map((p: any) => {
-          if (p.type === 'text') return { type: 'text' as const, text: p.text };
+        for (const p of m.content) {
           if (p.type === 'tool_use') {
-            const id = p.id ?? missingIds.get(`${i}:${bi++}`) ?? crypto.randomUUID();
-            return { type: 'tool-call' as const, toolCallId: id, toolName: p.name, input: p.input };
+            const id = p.id ?? crypto.randomUUID();
+            if (!p.id) missingIds.set(`${i}:${bi}`, id);
+            if (p.name) toolNameMap.set(id, p.name);
+            bi++;
           }
-          return { type: 'text' as const, text: '' };
-        });
-        result.push({ role: 'assistant', content });
-      } else {
-        result.push({ role: 'assistant', content: m.content ?? '' });
+        }
       }
-      continue;
+    } else if (m.role === 'user' && Array.isArray(m.content)) {
+      let ri = 0;
+      for (const p of m.content) {
+        if (p.type === 'tool_result') {
+          if (!p.tool_use_id && lastAssIdx >= 0) {
+            toolResultIds.set(`${i}:${ri}`, missingIds.get(`${lastAssIdx}:${ri}`) ?? crypto.randomUUID());
+          }
+          ri++;
+        }
+      }
     }
   }
-  return result;
+
+  return messages.map((m, i): LanguageMessage => {
+    if (m.role === 'system') return { role: 'system', content: m.content };
+    if (m.role === 'user') {
+      if (!Array.isArray(m.content)) return { role: 'user', content: m.content ?? '' };
+      const toolResults = m.content.filter((p: any) => p.type === 'tool_result');
+      if (toolResults.length) {
+        return {
+          role: 'tool',
+          content: toolResults.map((p: any, ri: number) => {
+            const id = p.tool_use_id ?? toolResultIds.get(`${i}:${ri}`) ?? crypto.randomUUID();
+            return {
+              type: 'tool-result',
+              toolCallId: id,
+              toolName: toolNameMap.get(id) ?? id,
+              result: Array.isArray(p.content) ? p.content.map((c: any) => c.text).join('') : (p.content ?? ''),
+              isError: p.is_error ?? false,
+            };
+          }),
+        };
+      }
+      return {
+        role: 'user',
+        content: m.content.map((p: any) => {
+          if (p.type === 'text') return { type: 'text', text: p.text };
+          if (p.type === 'image') return { type: 'file', data: p.source.url ?? p.source.data, mediaType: p.source.media_type ?? 'image/jpeg' };
+          return { type: 'text', text: '' };
+        }),
+      } as LanguageMessage;
+    }
+    if (m.role === 'assistant') {
+      if (!Array.isArray(m.content)) return { role: 'assistant', content: m.content ?? '' };
+      let bi = 0;
+      return {
+        role: 'assistant',
+        content: m.content.map((p: any) => {
+          if (p.type === 'text') return { type: 'text', text: p.text };
+          if (p.type === 'tool_use') {
+            const id = p.id ?? missingIds.get(`${i}:${bi++}`) ?? crypto.randomUUID();
+            return { type: 'tool-call', toolCallId: id, toolName: p.name, input: p.input };
+          }
+          return { type: 'text', text: '' };
+        }),
+      } as LanguageMessage;
+    }
+    return { role: 'user', content: '' };
+  });
 }
 
 function decodeRequest(body: any): LanguageRequest {

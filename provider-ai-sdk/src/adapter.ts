@@ -19,14 +19,30 @@ function toSystem(messages: LanguageMessage[]): string | undefined {
 
 function toMessages(messages: LanguageMessage[]): unknown[] {
   return messages.filter(m => m.role !== 'system').flatMap((msg): unknown[] => {
-    if (msg.role === 'user') {
-      if (typeof msg.content === 'string') return [{ role: 'user', content: msg.content }];
-      return [{ role: 'user', content: msg.content }];
-    }
-
-    if (msg.role === 'assistant') {
-      if (typeof msg.content === 'string') return [{ role: 'assistant', content: msg.content }];
-      return [{ role: 'assistant', content: msg.content }];
+    if (msg.role === 'user' || msg.role === 'assistant') {
+      if (typeof msg.content === 'string') {
+        return [{ role: msg.role, content: msg.content }];
+      }
+      if (Array.isArray(msg.content)) {
+        return [{
+          role: msg.role,
+          content: msg.content.map(part => {
+            if (part.type === 'tool-call') {
+              let input = part.input;
+              if (typeof input === 'string') {
+                try {
+                  input = JSON.parse(input);
+                } catch {
+                  // Keep as string if not valid JSON
+                }
+              }
+              return { ...part, input };
+            }
+            return part;
+          }),
+        }];
+      }
+      return [{ role: msg.role, content: msg.content }];
     }
 
     if (msg.role === 'tool') {
@@ -79,8 +95,8 @@ function toFinishReason(reason: string): FinishReason {
 
 function toUsage(usage?: Record<string, number>): LanguageTokenUsage {
   return {
-    inputTokens:  { total: usage?.inputTokens ?? usage?.promptTokens, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
-    outputTokens: { total: usage?.outputTokens ?? usage?.completionTokens, reasoning: undefined },
+    inputTokens:  { total: usage?.inputTokens ?? usage?.promptTokens ?? 0, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
+    outputTokens: { total: usage?.outputTokens ?? usage?.completionTokens ?? 0, reasoning: undefined },
   };
 }
 

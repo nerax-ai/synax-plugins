@@ -1,7 +1,7 @@
-import type { Provider, LanguageCapability, LanguageRequest, LanguageResponse, LanguageStreamPart } from '@synax-ai/sdk';
+import type { Provider, LanguageCapability, LanguageRequest, LanguageResponse, LanguageStreamPart, Logger } from '@synax-ai/sdk';
 import type { AiSdkProviderConfig } from './types';
 import { createAiSdkInstance, loadAiCore, type AiSdkInstance, type AiSdkCore } from './loader';
-import { createProxyFetch } from './proxy';
+import { createFetch } from './http';
 import { generate, stream } from './adapter';
 
 export class AiSdkProvider implements Provider {
@@ -10,7 +10,11 @@ export class AiSdkProvider implements Provider {
   private core?: AiSdkCore;
   private initPromise?: Promise<void>;
 
-  constructor(id: string, private readonly config: AiSdkProviderConfig) {
+  constructor(
+    id: string,
+    private readonly config: AiSdkProviderConfig,
+    private readonly logger: Logger,
+  ) {
     this.id = id;
   }
 
@@ -18,14 +22,15 @@ export class AiSdkProvider implements Provider {
 
   private init(): Promise<void> {
     return (this.initPromise ??= (async () => {
-      const fetchFn = this.config.proxy ? createProxyFetch(this.config.proxy) : undefined;
+      const fetchFn = createFetch(this.id, this.logger, this.config.proxy);
+
       [this.core, this.instance] = await Promise.all([
         loadAiCore(),
         createAiSdkInstance(this.config.package, {
           apiKey: this.config.apiKey,
           baseURL: this.config.baseURL,
           headers: this.config.headers,
-          fetch: fetchFn as typeof globalThis.fetch,
+          fetch: fetchFn,
         }),
       ]);
     })());

@@ -85,19 +85,20 @@ function encodeResponse(res: LanguageResponse): any {
 // --- encode streaming ---
 
 function encodeStreamPart(part: LanguageStreamPart, model: string, id: string): string | null {
-  let delta: any = null;
+  const chunk = (delta: any, finish_reason: string | null = null) =>
+    `data: ${JSON.stringify({
+      id,
+      object: 'chat.completion.chunk',
+      created: Math.floor(Date.now() / 1000),
+      model,
+      choices: [{ index: 0, delta, finish_reason }],
+    })}\n\n`;
 
-  if (part.type === 'text-delta') delta = { content: part.delta };
-  else if (part.type === 'tool-input-start') delta = { tool_calls: [{ index: 0, id: part.id, type: 'function', function: { name: part.toolName, arguments: '' } }] };
-  else if (part.type === 'tool-input-delta') delta = { tool_calls: [{ index: 0, function: { arguments: part.delta } }] };
-  else if (part.type === 'finish') {
-    const chunk = { id, object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model, choices: [{ index: 0, delta: {}, finish_reason: part.finishReason ?? 'stop' }] };
-    return `data: ${JSON.stringify(chunk)}\n\n`;
-  }
-  else return null;
-
-  const chunk = { id, object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model, choices: [{ index: 0, delta, finish_reason: null }] };
-  return `data: ${JSON.stringify(chunk)}\n\n`;
+  if (part.type === 'text-delta') return chunk({ content: part.delta });
+  if (part.type === 'tool-input-start') return chunk({ tool_calls: [{ index: 0, id: part.id, type: 'function', function: { name: part.toolName, arguments: '' } }] });
+  if (part.type === 'tool-input-delta') return chunk({ tool_calls: [{ index: 0, function: { arguments: part.delta } }] });
+  if (part.type === 'finish') return chunk({}, part.finishReason ?? 'stop');
+  return null;
 }
 
 // --- endpoint ---

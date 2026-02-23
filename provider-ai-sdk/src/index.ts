@@ -5,8 +5,8 @@ import type { AiSdkProviderConfig } from './types';
 type FactoryCtx = { instanceId: string; options: Record<string, unknown>; logger: Logger; storage: PluginStorage };
 
 export function setup(ctx: { register(type: 'provider', id: string, factory: (ctx: FactoryCtx) => Provider | Promise<Provider>): void }) {
-  ctx.register('provider', 'ai-sdk', ({ instanceId, options }) =>
-    new AiSdkProvider(instanceId, options as unknown as AiSdkProviderConfig),
+  ctx.register('provider', 'ai-sdk', ({ instanceId, options, logger }) =>
+    new AiSdkProvider(instanceId, options as unknown as AiSdkProviderConfig, logger),
   );
 }
 

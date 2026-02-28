@@ -21,12 +21,12 @@ async function bunInstall(pkg: string): Promise<void> {
 const dynamicImport = new Function('pkg', 'return import(pkg)') as (pkg: string) => Promise<Record<string, unknown>>;
 
 async function tryImport(pkg: string): Promise<Record<string, unknown>> {
-  const localPath = `${pluginDir}/node_modules/${pkg}`;
+  const resolve = () => import.meta.resolve(pkg, `${pluginDir}/package.json`);
   try {
-    return await dynamicImport(localPath);
+    return await dynamicImport(resolve());
   } catch {
     await bunInstall(pkg);
-    return await dynamicImport(localPath);
+    return await dynamicImport(resolve());
   }
 }
 

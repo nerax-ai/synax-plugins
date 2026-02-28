@@ -20,16 +20,16 @@ async function bunInstall(pkg: string): Promise<void> {
 
 const dynamicImport = new Function('pkg', 'return import(pkg)') as (pkg: string) => Promise<Record<string, unknown>>;
 
+function isInstalledLocally(pkg: string): boolean {
+  return require('fs').existsSync(`${pluginDir}/node_modules/${pkg}`);
+}
+
 async function tryImport(pkg: string): Promise<Record<string, unknown>> {
-  const parent = '../package.json';
-  let resolved: string;
-  try {
-    resolved = import.meta.resolve(pkg, parent);
-  } catch {
+  if (!isInstalledLocally(pkg)) {
     await bunInstall(pkg);
-    resolved = import.meta.resolve(pkg, parent);
   }
-  return await dynamicImport(resolved);
+  const localPath = `${pluginDir}/node_modules/${pkg}`;
+  return await dynamicImport(localPath);
 }
 
 export async function loadAiCore(): Promise<AiSdkCore> {

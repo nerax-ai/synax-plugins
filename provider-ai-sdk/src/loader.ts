@@ -21,13 +21,15 @@ async function bunInstall(pkg: string): Promise<void> {
 const dynamicImport = new Function('pkg', 'return import(pkg)') as (pkg: string) => Promise<Record<string, unknown>>;
 
 async function tryImport(pkg: string): Promise<Record<string, unknown>> {
-  const resolve = () => import.meta.resolve(pkg, `${pluginDir}/package.json`);
+  const parent = `${pluginDir}/package.json`;
+  let resolved: string;
   try {
-    return await dynamicImport(resolve());
+    resolved = import.meta.resolve(pkg, parent);
   } catch {
     await bunInstall(pkg);
-    return await dynamicImport(resolve());
+    resolved = import.meta.resolve(pkg, parent);
   }
+  return await dynamicImport(resolved);
 }
 
 export async function loadAiCore(): Promise<AiSdkCore> {

@@ -8,14 +8,40 @@ import type {
   EndpointContext,
 } from '@synax-ai/sdk';
 
+export interface OpenAIToolCall {
+  id: string;
+  type: 'function';
+  function: { name: string; arguments: string };
+}
+export interface OpenAIMessage {
+  role: string;
+  content?: string | any[];
+  tool_calls?: OpenAIToolCall[];
+  tool_call_id?: string;
+  name?: string;
+}
+export interface OpenAIRequest {
+  model: string;
+  messages?: OpenAIMessage[];
+  max_tokens?: number;
+  max_completion_tokens?: number;
+  temperature?: number;
+  top_p?: number;
+  stop?: string | string[];
+  tools?: any[];
+  tool_choice?: any;
+  seed?: number;
+  stream?: boolean;
+}
+
 // --- decode ---
 
-function decodeMessages(messages: any[]): LanguageMessage[] {
+function decodeMessages(messages: OpenAIMessage[]): LanguageMessage[] {
   return messages.map((m): LanguageMessage => {
     if (m.role === 'tool') {
       return {
         role: 'tool',
-        content: [{ type: 'tool-result', toolCallId: m.tool_call_id, toolName: '', result: m.content ?? '' }],
+        content: [{ type: 'tool-result', toolCallId: m.tool_call_id ?? '', toolName: m.name ?? '', result: typeof m.content === 'string' ? { type: 'text', value: m.content } : { type: 'text', value: m.content ? JSON.stringify(m.content) : '' } }],
       };
     }
     if (m.role === 'assistant' && m.tool_calls) {
@@ -33,9 +59,9 @@ function decodeMessages(messages: any[]): LanguageMessage[] {
   });
 }
 
-function decodeRequest(body: any): LanguageRequest {
+function decodeRequest(body: Partial<OpenAIRequest>): LanguageRequest {
   return {
-    model: body.model,
+    model: body.model ?? '',
     messages: decodeMessages(body.messages ?? []),
     maxOutputTokens: body.max_tokens ?? body.max_completion_tokens,
     temperature: body.temperature ?? undefined,
@@ -131,8 +157,12 @@ function createOpenAIEndpoint(options: Record<string, unknown>): Endpoint {
                   controller.enqueue(enc.encode('data: [DONE]\n\n'));
                   controller.close();
                 } catch (e: any) {
+                  if (e?.name === 'AbortError') {
+                    controller.close();
+                    return;
+                  }
                   const status = e?.statusCode ?? e?.status ?? 500;
-                  console.error(`[openai] stream error ${status}: ${e?.message ?? e}`);
+                  ctx.logger.error(`stream error ${status}: ${e?.message ?? e}`);
                   controller.close();
                 }
               },

@@ -4,7 +4,7 @@
   "type": "module",
   "main": "./src/index.ts",
   "dependencies": {
-    "@synax-ai/sdk": "0.0.4",
+    "@synax-ai/sdk": "^0.0.9",
     "undici": "^7.0.0"
   },
   "devDependencies": {

@@ -17,20 +17,21 @@ export function createFetch(id: string, logger: Logger, proxyUrl?: string): type
     logger.debug(`[${id}] Request:\nURL: ${url.toString()}\nMethod: ${init?.method ?? 'GET'}\nBody:\n${reqBodyStr}`);
 
     const response = await undiciFetch(url as any, { ...(init as object), dispatcher });
-    const cloned = response.clone();
 
-    try {
-      const text = await cloned.text();
-      let resBodyStr = text;
+    if (!response.headers.get('content-type')?.includes('text/event-stream')) {
+      const cloned = response.clone();
       try {
-        if (text.startsWith('{')) {
-          resBodyStr = JSON.stringify(JSON.parse(text), null, 2);
-        }
-      } catch (e) {}
-      
-      logger.debug(`[${id}] Response:\nStatus: ${response.status}\nBody:\n${resBodyStr}`);
-    } catch (e) {
-      logger.debug(`[${id}] Response: <failed to parse body>`);
+        const text = await cloned.text();
+        let resBodyStr = text;
+        try {
+          if (text.startsWith('{')) resBodyStr = JSON.stringify(JSON.parse(text), null, 2);
+        } catch (e) {}
+        logger.debug(`[${id}] Response:\nStatus: ${response.status}\nBody:\n${resBodyStr}`);
+      } catch (e) {
+        logger.debug(`[${id}] Response: <failed to parse body>`);
+      }
+    } else {
+      logger.debug(`[${id}] Response:\nStatus: ${response.status}\nBody: <stream>`);
     }
 
     return response as unknown as Response;

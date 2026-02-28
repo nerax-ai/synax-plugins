@@ -11,8 +11,10 @@ export interface AiSdkCore {
 
 let coreCache: AiSdkCore | undefined;
 
+const pluginDir = import.meta.dir.replace(/[\\/]src$/, '');
+
 async function bunInstall(pkg: string): Promise<void> {
-  const result = await Bun.$`bun add ${pkg}`.quiet();
+  const result = await Bun.$`bun add ${pkg} --cwd ${pluginDir}`.quiet();
   if (result.exitCode !== 0) throw new Error(`Failed to install '${pkg}': ${result.stderr.toString()}`);
 }
 

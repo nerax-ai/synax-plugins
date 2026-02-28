@@ -21,11 +21,12 @@ async function bunInstall(pkg: string): Promise<void> {
 const dynamicImport = new Function('pkg', 'return import(pkg)') as (pkg: string) => Promise<Record<string, unknown>>;
 
 async function tryImport(pkg: string): Promise<Record<string, unknown>> {
+  const localPath = `${pluginDir}/node_modules/${pkg}`;
   try {
-    return await dynamicImport(pkg);
+    return await dynamicImport(localPath);
   } catch {
     await bunInstall(pkg);
-    return await dynamicImport(pkg);
+    return await dynamicImport(localPath);
   }
 }
 

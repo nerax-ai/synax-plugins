@@ -19,7 +19,7 @@ function createOpenAIResponsesEndpoint(options: Record<string, unknown>): Endpoi
 
       app.post('/v1/responses', async (c: any) => {
         const body = await c.req.json();
-        log.debug(`[openai-responses] Request:\n${JSON.stringify(body, null, 2)}`);
+        log.debug(`[API] [openai-responses] Request:\n${JSON.stringify(body, null, 2)}`);
         const req = decodeRequest(body);
 
         if (body.stream) {
@@ -36,19 +36,26 @@ function createOpenAIResponsesEndpoint(options: Record<string, unknown>): Endpoi
                 try {
                   for await (const part of stream) {
                     if (signal.aborted) break;
-                    log.debug(`[openai-responses] Stream part: ${JSON.stringify(part)}`);
+                    log.debug(`[API] [openai-responses] Stream part:\n${JSON.stringify(part, null, 2)}`);
                     if (part.type === 'response-metadata') continue;
                     const line = encoder.encode(part, req.model, id);
                     if (line) {
-                      log.debug(`[openai-responses] SSE: ${line.trim()}`);
+                      let logLine = line.trim();
+                      if (logLine.startsWith('data: {')) {
+                        try {
+                          const parsed = JSON.parse(logLine.slice(6));
+                          logLine = 'data: ' + JSON.stringify(parsed, null, 2).split('\n').join('\n  ');
+                        } catch {}
+                      }
+                      log.debug(`[API] [openai-responses] SSE:\n${logLine}`);
                       controller.enqueue(enc.encode(line));
                     }
                   }
-                  log.debug(`[openai-responses] Stream completed`);
+                  log.debug(`[API] [openai-responses] Stream completed`);
                   controller.close();
                 } catch (e: any) {
                   const status = e?.statusCode ?? e?.status ?? 500;
-                  log.error(`[openai-responses] stream error ${status}: ${e?.message ?? e}`);
+                  log.error(`[API] [openai-responses] stream error ${status}: ${e?.message ?? e}`);
                   controller.close();
                 }
               },
@@ -59,7 +66,7 @@ function createOpenAIResponsesEndpoint(options: Record<string, unknown>): Endpoi
 
         const res = await ctx.language.generate(req);
         const encoded = encodeResponse(res, res.usage?.inputTokens.total ?? 0);
-        log.debug(`[openai-responses] Response:\n${JSON.stringify(encoded, null, 2)}`);
+        log.debug(`[API] [openai-responses] Response:\n${JSON.stringify(encoded, null, 2)}`);
         return c.json(encoded);
       });
 

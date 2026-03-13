@@ -1,6 +1,31 @@
 import { ProxyAgent, fetch as undiciFetch } from 'undici';
 import type { Logger } from '@synax-ai/sdk';
 
+function formatBody(body: string): string {
+  if (!body) return body;
+  try {
+    if (body.startsWith('{') || body.startsWith('[')) {
+      return JSON.stringify(JSON.parse(body), null, 2);
+    }
+  } catch {}
+
+  if (body.includes('data: {') || body.includes('data: [')) {
+    return body.split('\n').map(line => {
+      if (line.startsWith('data: ') && (line.includes('{') || line.includes('['))) {
+        try {
+          const parsed = JSON.parse(line.slice(6));
+          return 'data: ' + JSON.stringify(parsed, null, 2).split('\n').join('\n  ');
+        } catch {
+          return line;
+        }
+      }
+      return line;
+    }).join('\n');
+  }
+
+  return body;
+}
+
 export function createFetch(id: string, logger: Logger, proxyUrl?: string): typeof globalThis.fetch {
   const dispatcher = proxyUrl ? new ProxyAgent(proxyUrl) : undefined;
 
@@ -14,7 +39,7 @@ export function createFetch(id: string, logger: Logger, proxyUrl?: string): type
       }
     }
 
-    logger.debug(`[${id}] Request:\nURL: ${url.toString()}\nMethod: ${init?.method ?? 'GET'}\nBody:\n${reqBodyStr}`);
+    logger.debug(`[HTTP] [${id}] Request:\nURL: ${url.toString()}\nMethod: ${init?.method ?? 'GET'}\nBody:\n${formatBody(reqBodyStr)}`);
 
     const response = await undiciFetch(url as any, { ...(init as object), dispatcher });
 
@@ -23,16 +48,12 @@ export function createFetch(id: string, logger: Logger, proxyUrl?: string): type
       try {
         const text = await cloned.text();
         let resBodyStr = text;
-        try {
-          if (text.startsWith('{')) resBodyStr = JSON.stringify(JSON.parse(text), null, 2);
-        } catch (e) {}
-        logger.debug(`[${id}] Response:\nStatus: ${response.status}\nBody:\n${resBodyStr}`);
+        logger.debug(`[HTTP] [${id}] Response:\nStatus: ${response.status}\nBody:\n${formatBody(resBodyStr)}`);
       } catch (e) {
         logger.debug(`[${id}] Response: <failed to parse body>`);
       }
     } else {
       // For SSE streams, wrap the response to log events
-      logger.debug(`[${id}] Response:\nStatus: ${response.status}\nBody: <stream>`);
       const originalBody = response.body as any;
       const reader = originalBody.getReader();
       const decoder = new TextDecoder();
@@ -47,7 +68,7 @@ export function createFetch(id: string, logger: Logger, proxyUrl?: string): type
             return;
           }
           const chunk = decoder.decode(value, { stream: true });
-          logger.debug(`[${id}] Stream chunk: ${chunk.trim()}`);
+          logger.debug(`[HTTP] [${id}] Stream chunk:\n${formatBody(chunk.trim())}`);
           controller.enqueue(encoder.encode(chunk));
         },
       });

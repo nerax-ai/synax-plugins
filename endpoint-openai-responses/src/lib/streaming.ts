@@ -15,6 +15,7 @@ export class StreamEncoder {
   private idToIndex = new Map<string, number>();
   private toolArguments = new Map<string, string>();
   private toolNames = new Map<string, string>();
+  private messageTexts = new Map<string, string>();
 
   private getOutputIndex(id: string): number {
     let idx = this.idToIndex.get(id);
@@ -50,14 +51,17 @@ export class StreamEncoder {
     }
     if (part.type === 'text-end') {
       const idx = this.idToIndex.get(part.id) ?? 0;
+      const text = this.messageTexts.get(part.id) ?? '';
       const phase = (part.providerMetadata as any)?.openai?.phase;
-      const item: any = { id: part.id, type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '' }], status: 'completed' };
+      const item: any = { id: part.id, type: 'message', role: 'assistant', content: [{ type: 'output_text', text }], status: 'completed' };
       if (phase) item.phase = phase;
-      return sse('response.content_part.done', { item_id: part.id, output_index: idx, content_index: 0, part: { type: 'output_text', text: '' } })
+      return sse('response.content_part.done', { item_id: part.id, output_index: idx, content_index: 0, part: { type: 'output_text', text } })
         + sse('response.output_item.done', { output_index: idx, item });
     }
     if (part.type === 'text-delta') {
       const idx = this.idToIndex.get(part.id) ?? 0;
+      const current = this.messageTexts.get(part.id) ?? '';
+      this.messageTexts.set(part.id, current + part.delta);
       return sse('response.output_text.delta', { item_id: part.id, output_index: idx, content_index: 0, delta: part.delta });
     }
 

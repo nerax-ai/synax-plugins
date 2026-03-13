@@ -1,15 +1,16 @@
 import type { AiSdkPackageName } from './types';
 import { AI_SDK_PACKAGES, AI_SDK_FACTORY_NAMES } from './types';
+import { generateText, streamText, jsonSchema } from 'ai';
 
-export type AiSdkInstance = (modelId: string) => unknown;
+import type { LanguageModelV3 } from '@ai-sdk/provider';
+
+export type AiSdkInstance = any;
 
 export interface AiSdkCore {
-  generateText: Function;
-  streamText: Function;
-  jsonSchema: Function;
+  generateText: typeof generateText;
+  streamText: typeof streamText;
+  jsonSchema: typeof jsonSchema;
 }
-
-let coreCache: AiSdkCore | undefined;
 
 const pluginDir = import.meta.dir.replace(/[\\/]src$/, '');
 
@@ -33,14 +34,11 @@ async function tryImport(pkg: string): Promise<Record<string, unknown>> {
 }
 
 export async function loadAiCore(): Promise<AiSdkCore> {
-  if (coreCache) return coreCache;
-  const mod = await tryImport('ai');
-  coreCache = {
-    generateText: mod.generateText as Function,
-    streamText: mod.streamText as Function,
-    jsonSchema: mod.jsonSchema as Function,
+  return {
+    generateText,
+    streamText,
+    jsonSchema,
   };
-  return coreCache;
 }
 
 export async function createAiSdkInstance(

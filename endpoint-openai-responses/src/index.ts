@@ -126,6 +126,7 @@ function encodeResponse(res: LanguageResponse, inputTokens: number): any {
 class StreamEncoder {
   private outputIndex = 0;
   private idToIndex = new Map<string, number>();
+  private toolArguments = new Map<string, string>();
 
   private getOutputIndex(id: string): number {
     let idx = this.idToIndex.get(id);
@@ -184,11 +185,15 @@ class StreamEncoder {
     }
     if (part.type === 'tool-input-delta') {
       const idx = this.idToIndex.get(part.id) ?? 0;
+      // Accumulate arguments for this tool call
+      const current = this.toolArguments.get(part.id) ?? '';
+      this.toolArguments.set(part.id, current + part.delta);
       return sse('response.function_call_arguments.delta', { item_id: part.id, output_index: idx, delta: part.delta });
     }
     if (part.type === 'tool-input-end') {
       const idx = this.idToIndex.get(part.id) ?? 0;
-      const item = { id: part.id, type: 'function_call', status: 'completed' };
+      const arguments = this.toolArguments.get(part.id) ?? '';
+      const item = { id: part.id, type: 'function_call', arguments, status: 'completed' };
       return sse('response.output_item.done', { output_index: idx, item });
     }
 

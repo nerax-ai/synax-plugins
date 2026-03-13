@@ -168,21 +168,33 @@ function decodeInput(input: RequestInput[] | string | undefined, instructions?: 
   return messages;
 }
 
-function decodeTools(tools: Tool[] | undefined): LanguageTool[] | undefined {
+function decodeTools(tools: any[] | undefined): LanguageTool[] | undefined {
   if (!tools) return undefined;
 
-  return tools.map((tool): LanguageTool => ({
-    type: 'function',
-    name: tool.function.name,
-    description: tool.function.description ?? '',
-    inputSchema: tool.function.parameters ?? { type: 'object', properties: {} },
-  }));
+  return tools.map((tool): LanguageTool => {
+    // Handle OpenAI format: { type: 'function', function: { name, parameters, ... } }
+    if (tool.function && typeof tool.function === 'object') {
+      return {
+        type: 'function',
+        name: tool.function.name ?? '',
+        description: tool.function.description ?? '',
+        inputSchema: tool.function.parameters ?? tool.function.input_schema ?? { type: 'object', properties: {} },
+      };
+    }
+    // Handle direct format: { name, description, inputSchema/parameters, ... }
+    return {
+      type: tool.type ?? 'function',
+      name: tool.name ?? '',
+      description: tool.description ?? '',
+      inputSchema: tool.inputSchema ?? tool.parameters ?? tool.input_schema ?? { type: 'object', properties: {} },
+    };
+  });
 }
 
-function decodeToolChoice(toolChoice: ResponsesRequest['tool_choice']): LanguageRequest['toolChoice'] {
+function decodeToolChoice(toolChoice: any): LanguageRequest['toolChoice'] {
   if (!toolChoice) return undefined;
   if (typeof toolChoice === 'string') return toolChoice;
-  if (typeof toolChoice === 'object' && toolChoice.type === 'function') {
+  if (typeof toolChoice === 'object' && toolChoice.type === 'function' && toolChoice.function?.name) {
     return { type: 'function', function: { name: toolChoice.function.name } };
   }
   return undefined;

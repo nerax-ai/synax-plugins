@@ -4,6 +4,8 @@ function decodeInput(input: any): LanguageMessage[] {
   if (typeof input === 'string') return [{ role: 'user', content: input }];
   if (!Array.isArray(input)) return [];
 
+  const toolCallNames = new Map<string, string>();
+
   return input.map((item: any): LanguageMessage | null => {
     const { type, role, content, call_id, name, arguments: args, output } = item;
 
@@ -26,7 +28,10 @@ function decodeInput(input: any): LanguageMessage[] {
       }
       return { role: normalizedRole, content: '' };
     }
-    if (type === 'function_call') return { role: 'assistant', content: [{ type: 'tool-call', toolCallId: call_id, toolName: name, input: args }] };
+    if (type === 'function_call') {
+      if (call_id && name) toolCallNames.set(call_id, name);
+      return { role: 'assistant', content: [{ type: 'tool-call', toolCallId: call_id, toolName: name, input: args }] };
+    }
     if (type === 'function_call_output') {
       let result;
       if (typeof output === 'string') {
@@ -39,7 +44,8 @@ function decodeInput(input: any): LanguageMessage[] {
       } else {
         result = output ?? { type: 'text' as const, value: '' };
       }
-      return { role: 'tool', content: [{ type: 'tool-result', toolCallId: call_id, toolName: name || '', result }] };
+      const toolName = name || toolCallNames.get(call_id) || '';
+      return { role: 'tool', content: [{ type: 'tool-result', toolCallId: call_id, toolName, result }] };
     }
     return { role: 'user', content: '' };
   }).filter((msg): msg is LanguageMessage => msg !== null);

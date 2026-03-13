@@ -52,9 +52,17 @@ export function decodeRequest(body: any): LanguageRequest {
     toolChoice: body.tool_choice,
   };
 
-  // Pass instructions through provider options if present
-  if (body.instructions) {
-    req.providerOptions = { openai: { instructions: body.instructions } };
+  // Build provider options
+  const openaiOptions: any = {};
+  if (body.instructions) openaiOptions.instructions = body.instructions;
+  if (body.parallel_tool_calls !== undefined) openaiOptions.parallelToolCalls = body.parallel_tool_calls;
+  if (body.reasoning !== undefined) openaiOptions.reasoning = body.reasoning;
+  if (body.store !== undefined) openaiOptions.store = body.store;
+  if (body.include) openaiOptions.include = body.include;
+  if (body.prompt_cache_key) openaiOptions.promptCacheKey = body.prompt_cache_key;
+
+  if (Object.keys(openaiOptions).length > 0) {
+    req.providerOptions = { openai: openaiOptions };
   }
 
   return req;

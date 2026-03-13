@@ -4,56 +4,206 @@ import type {
   LanguageStreamPart,
   LanguageMessage,
   LanguageToolCallContent,
+  LanguageTool,
   Endpoint,
   EndpointContext,
 } from '@synax-ai/sdk';
 
+// --- Types ---
+
+export interface InputTextContent {
+  type: 'input_text';
+  text: string;
+}
+
+export interface InputImageContent {
+  type: 'input_image';
+  image_url: string;
+}
+
+export interface OutputTextContent {
+  type: 'output_text';
+  text: string;
+}
+
+export type MessageContent = InputTextContent | InputImageContent | OutputTextContent | Record<string, unknown>;
+
+export interface InputMessage {
+  type?: 'message';
+  role?: 'developer' | 'user' | 'assistant' | 'system';
+  content?: string | MessageContent[];
+}
+
+export interface FunctionCallMessage {
+  type: 'function_call';
+  call_id: string;
+  name: string;
+  arguments: string;
+}
+
+export interface FunctionCallOutput {
+  type: 'function_call_output';
+  call_id: string;
+  output: string;
+}
+
+export type RequestInput = InputMessage | FunctionCallMessage | FunctionCallOutput | string;
+
+export interface ToolFunction {
+  name: string;
+  description?: string;
+  parameters?: Record<string, unknown>;
+  strict?: boolean;
+}
+
+export interface Tool {
+  type: 'function';
+  function: ToolFunction;
+}
+
+export interface ResponsesRequest {
+  model: string;
+  input?: RequestInput[];
+  instructions?: string;
+  tools?: Tool[];
+  tool_choice?: 'auto' | 'none' | 'required' | { type: 'function'; function: { name: string } };
+  stream?: boolean;
+  max_output_tokens?: number;
+  temperature?: number;
+  top_p?: number;
+  top_k?: number;
+  frequency_penalty?: number;
+  presence_penalty?: number;
+  seed?: number;
+  // Extended fields (Codex/Responses API)
+  reasoning?: unknown;
+  store?: boolean;
+  include?: string[];
+  prompt_cache_key?: string;
+  parallel_tool_calls?: boolean;
+}
+
 // --- decode ---
 
-function decodeInput(input: any): LanguageMessage[] {
-  if (typeof input === 'string') return [{ role: 'user', content: input }];
-  if (!Array.isArray(input)) return [];
+function decodeContent(content: string | MessageContent[]): any[] {
+  if (typeof content === 'string') {
+    return [{ type: 'text', text: content }];
+  }
+  if (!Array.isArray(content)) {
+    return [{ type: 'text', text: '' }];
+  }
 
-  return input.map((item: any): LanguageMessage => {
-    const { type, role, content, call_id, name, arguments: args, output } = item;
-    // Map 'developer' role (Anthropic) to 'system' for OpenAI compatibility
-    const normalizedRole = role === 'developer' ? 'system' : role;
-    if (type === 'message' || role) {
-      if (typeof content === 'string') return { role: normalizedRole, content } as LanguageMessage;
-      if (Array.isArray(content)) {
-        return {
-          role: normalizedRole,
-          content: content.map((p: any) =>
-            (p.type === 'input_text' || p.type === 'output_text') ? { type: 'text', text: p.text } :
-            (p.type === 'image_url') ? { type: 'file', data: new URL(p.image_url.url), mediaType: 'image/jpeg' } :
-            { type: 'text', text: '' }
-          ),
-        } as LanguageMessage;
-      }
+  return content.map((p: any): any => {
+    if (p.type === 'input_text' || p.type === 'output_text') {
+      return { type: 'text', text: p.text };
     }
-    if (type === 'function_call') return { role: 'assistant', content: [{ type: 'tool-call', toolCallId: call_id, toolName: name, input: args }] };
-    if (type === 'function_call_output') return { role: 'tool', content: [{ type: 'tool-result', toolCallId: call_id, toolName: '', result: output ?? '' }] };
-    return { role: 'user', content: '' };
+    if (p.type === 'image_url') {
+      return { type: 'file', data: new URL(p.image_url?.url ?? p.image_url), mediaType: 'image/jpeg' };
+    }
+    if (p.type === 'input_image') {
+      return { type: 'file', data: new URL(p.image_url), mediaType: 'image/jpeg' };
+    }
+    return p;
   });
 }
 
-function decodeRequest(body: any): LanguageRequest {
-  // Convert tools parameters schema (OpenAI format) to inputSchema (Synax format)
-  const tools = body.tools?.map((tool: any) => {
-    if (tool.parameters && !tool.inputSchema) {
-      return { ...tool, inputSchema: tool.parameters };
-    }
-    return tool;
-  });
+function decodeInput(input: RequestInput[] | string | undefined, instructions?: string): LanguageMessage[] {
+  if (!input) return instructions ? [{ role: 'system', content: instructions }] : [];
+  if (typeof input === 'string') {
+    const messages: LanguageMessage[] = [];
+    if (instructions) messages.push({ role: 'system', content: instructions });
+    messages.push({ role: 'user', content: input });
+    return messages;
+  }
+  if (!Array.isArray(input)) return [];
 
+  const messages: LanguageMessage[] = [];
+
+  // Add instructions as system message if present
+  if (instructions) {
+    messages.push({ role: 'system', content: instructions });
+  }
+
+  for (const item of input) {
+    const { type, role, content, call_id, name, arguments: args, output } = item as any;
+
+    // Handle role-based messages
+    if (type === 'message' || role) {
+      // Map 'developer' role to 'system' for compatibility
+      const normalizedRole = role === 'developer' ? 'system' : role;
+
+      if (typeof content === 'string') {
+        messages.push({ role: normalizedRole, content } as LanguageMessage);
+      } else if (Array.isArray(content)) {
+        messages.push({
+          role: normalizedRole,
+          content: decodeContent(content),
+        } as LanguageMessage);
+      }
+      continue;
+    }
+
+    // Handle function calls
+    if (type === 'function_call') {
+      messages.push({
+        role: 'assistant',
+        content: [{ type: 'tool-call', toolCallId: call_id, toolName: name, input: args }],
+      });
+      continue;
+    }
+
+    // Handle function outputs
+    if (type === 'function_call_output') {
+      messages.push({
+        role: 'tool',
+        content: [{ type: 'tool-result', toolCallId: call_id, toolName: '', result: output ?? '' }],
+      });
+      continue;
+    }
+
+    // Fallback
+    messages.push({ role: 'user', content: '' });
+  }
+
+  return messages;
+}
+
+function decodeTools(tools: Tool[] | undefined): LanguageTool[] | undefined {
+  if (!tools) return undefined;
+
+  return tools.map((tool): LanguageTool => ({
+    type: 'function',
+    name: tool.function.name,
+    description: tool.function.description ?? '',
+    inputSchema: tool.function.parameters ?? { type: 'object', properties: {} },
+  }));
+}
+
+function decodeToolChoice(toolChoice: ResponsesRequest['tool_choice']): LanguageRequest['toolChoice'] {
+  if (!toolChoice) return undefined;
+  if (typeof toolChoice === 'string') return toolChoice;
+  if (typeof toolChoice === 'object' && toolChoice.type === 'function') {
+    return { type: 'function', function: { name: toolChoice.function.name } };
+  }
+  return undefined;
+}
+
+function decodeRequest(body: ResponsesRequest): LanguageRequest {
   return {
     model: body.model,
-    messages: decodeInput(body.input),
-    maxOutputTokens: body.max_output_tokens ?? undefined,
-    temperature: body.temperature ?? undefined,
-    topP: body.top_p ?? undefined,
-    tools,
-    toolChoice: body.tool_choice,
+    messages: decodeInput(body.input, body.instructions),
+    maxOutputTokens: body.max_output_tokens,
+    temperature: body.temperature,
+    topP: body.top_p,
+    topK: body.top_k,
+    frequencyPenalty: body.frequency_penalty,
+    presencePenalty: body.presence_penalty,
+    seed: body.seed,
+    tools: decodeTools(body.tools),
+    toolChoice: decodeToolChoice(body.tool_choice),
+    // Pass through extended fields
+    ...(body.parallel_tool_calls !== undefined && { parallelToolCalls: body.parallel_tool_calls }),
+    ...(body.reasoning !== undefined && { reasoning: body.reasoning }),
   };
 }
 
@@ -65,7 +215,7 @@ function encodeFinishReason(r: string | null): string {
   return 'stop';
 }
 
-function encodeResponse(res: LanguageResponse, inputTokens: number): any {
+function encodeResponse(res: LanguageResponse, inputTokens: number): Record<string, unknown> {
   const choice = res.choices[0];
   const content = choice?.message?.content;
   const output: any[] = [];
@@ -80,28 +230,37 @@ function encodeResponse(res: LanguageResponse, inputTokens: number): any {
     for (const p of content) {
       if (p.type === 'text') textParts.push(p.text);
       else if (p.type === 'reasoning') {
-        // Extract reasoning text from the reasoning object
         const reasoning = (p as any).reasoning;
         if (Array.isArray(reasoning)) {
           reasoningContent = reasoning.map((r: any) => r.text ?? '').join('');
         } else if (typeof reasoning === 'string') {
           reasoningContent = reasoning;
         }
-      }
-      else if (p.type === 'tool-call') {
+      } else if (p.type === 'tool-call') {
         const tc = p as LanguageToolCallContent;
-        toolCalls.push({ type: 'function_call', id: `fc_${tc.toolCallId}`, call_id: tc.toolCallId, name: tc.toolName, arguments: typeof tc.input === 'string' ? tc.input : JSON.stringify(tc.input) });
+        toolCalls.push({
+          type: 'function_call',
+          id: `fc_${tc.toolCallId}`,
+          call_id: tc.toolCallId,
+          name: tc.toolName,
+          arguments: typeof tc.input === 'string' ? tc.input : JSON.stringify(tc.input),
+        });
       }
     }
   }
 
-  // Add reasoning output first (OpenAI Responses API order: reasoning -> message -> function_calls)
+  // Order: reasoning -> message -> function_calls
   if (reasoningContent) {
     output.push({ type: 'reasoning', id: `rs_${res.id}`, encrypted_content: reasoningContent, status: 'completed' });
   }
-
   if (textParts.length) {
-    output.push({ type: 'message', id: `msg_${res.id}`, role: 'assistant', content: [{ type: 'output_text', text: textParts.join('') }], status: 'completed' });
+    output.push({
+      type: 'message',
+      id: `msg_${res.id}`,
+      role: 'assistant',
+      content: [{ type: 'output_text', text: textParts.join('') }],
+      status: 'completed',
+    });
   }
   output.push(...toolCalls);
 
@@ -113,15 +272,21 @@ function encodeResponse(res: LanguageResponse, inputTokens: number): any {
     output,
     status: 'completed',
     stop_reason: encodeFinishReason(choice?.finishReason ?? null),
-    usage: res.usage ? {
-      input_tokens: inputTokens,
-      output_tokens: res.usage.outputTokens.total ?? 0,
-      total_tokens: inputTokens + (res.usage.outputTokens.total ?? 0),
-    } : undefined,
+    usage: res.usage
+      ? {
+          input_tokens: inputTokens,
+          output_tokens: res.usage.outputTokens.total ?? 0,
+          total_tokens: inputTokens + (res.usage.outputTokens.total ?? 0),
+        }
+      : undefined,
   };
 }
 
 // --- encode streaming ---
+
+function sse(event: string, data: object): string {
+  return `event: ${event}\ndata: ${JSON.stringify({ type: event, ...data })}\n\n`;
+}
 
 class StreamEncoder {
   private outputIndex = 0;
@@ -139,19 +304,16 @@ class StreamEncoder {
   }
 
   encode(part: LanguageStreamPart, model: string, id: string): string | null {
-    // Handle stream-start: already emitted in route handler
     if (part.type === 'stream-start') return null;
 
-    // --- Reasoning (encrypted content in OpenAI Responses API) ---
+    // --- Reasoning ---
     if (part.type === 'reasoning-start') {
       const idx = this.getOutputIndex(part.id);
       const item = { id: part.id, type: 'reasoning', encrypted_content: '', status: 'in_progress' };
       return sse('response.output_item.added', { output_index: idx, item });
     }
     if (part.type === 'reasoning-delta') {
-      const idx = this.idToIndex.get(part.id) ?? 0;
-      // OpenAI Responses API doesn't expose reasoning deltas, so we skip
-      // but we track the index for proper ordering
+      // OpenAI Responses API doesn't expose reasoning deltas
       return null;
     }
     if (part.type === 'reasoning-end') {
@@ -165,19 +327,44 @@ class StreamEncoder {
       const idx = this.getOutputIndex(part.id);
       const msgId = part.id;
       const phase = (part.providerMetadata as any)?.openai?.phase;
-      const item: any = { id: msgId, type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '' }], status: 'in_progress' };
+      const item: any = {
+        id: msgId,
+        type: 'message',
+        role: 'assistant',
+        content: [{ type: 'output_text', text: '' }],
+        status: 'in_progress',
+      };
       if (phase) item.phase = phase;
-      return sse('response.output_item.added', { output_index: idx, item })
-        + sse('response.content_part.added', { item_id: msgId, output_index: idx, content_index: 0, part: { type: 'output_text', text: '', annotations: [], logprobs: [] } });
+      return (
+        sse('response.output_item.added', { output_index: idx, item }) +
+        sse('response.content_part.added', {
+          item_id: msgId,
+          output_index: idx,
+          content_index: 0,
+          part: { type: 'output_text', text: '', annotations: [], logprobs: [] },
+        })
+      );
     }
     if (part.type === 'text-end') {
       const idx = this.idToIndex.get(part.id) ?? 0;
       const msgId = part.id;
       const phase = (part.providerMetadata as any)?.openai?.phase;
-      const item: any = { id: msgId, type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '' }], status: 'completed' };
+      const item: any = {
+        id: msgId,
+        type: 'message',
+        role: 'assistant',
+        content: [{ type: 'output_text', text: '' }],
+        status: 'completed',
+      };
       if (phase) item.phase = phase;
-      return sse('response.content_part.done', { item_id: msgId, output_index: idx, content_index: 0, part: { type: 'output_text', text: '' } })
-        + sse('response.output_item.done', { output_index: idx, item });
+      return (
+        sse('response.content_part.done', {
+          item_id: msgId,
+          output_index: idx,
+          content_index: 0,
+          part: { type: 'output_text', text: '' },
+        }) + sse('response.output_item.done', { output_index: idx, item })
+      );
     }
     if (part.type === 'text-delta') {
       const idx = this.idToIndex.get(part.id) ?? 0;
@@ -189,13 +376,18 @@ class StreamEncoder {
     if (part.type === 'tool-input-start') {
       const idx = this.getOutputIndex(part.id);
       this.toolNames.set(part.id, part.toolName);
-      // Use call_id for matching function call to output
-      const item = { id: part.id, type: 'function_call', call_id: part.id, name: part.toolName, arguments: '', status: 'in_progress' };
+      const item = {
+        id: part.id,
+        type: 'function_call',
+        call_id: part.id,
+        name: part.toolName,
+        arguments: '',
+        status: 'in_progress',
+      };
       return sse('response.output_item.added', { output_index: idx, item });
     }
     if (part.type === 'tool-input-delta') {
       const idx = this.idToIndex.get(part.id) ?? 0;
-      // Accumulate arguments for this tool call
       const current = this.toolArguments.get(part.id) ?? '';
       this.toolArguments.set(part.id, current + part.delta);
       return sse('response.function_call_arguments.delta', { item_id: part.id, output_index: idx, delta: part.delta });
@@ -204,8 +396,14 @@ class StreamEncoder {
       const idx = this.idToIndex.get(part.id) ?? 1;
       const args = this.toolArguments.get(part.id) ?? '';
       const name = this.toolNames.get(part.id) ?? '';
-      // Use call_id for matching function call to output
-      const item = { id: part.id, type: 'function_call', call_id: part.id, name, arguments: args, status: 'completed' };
+      const item = {
+        id: part.id,
+        type: 'function_call',
+        call_id: part.id,
+        name,
+        arguments: args,
+        status: 'completed',
+      };
       return sse('response.output_item.done', { output_index: idx, item });
     }
 
@@ -213,7 +411,11 @@ class StreamEncoder {
     if (part.type === 'finish') {
       return sse('response.completed', {
         response: {
-          id, object: 'response', created_at: Math.floor(Date.now() / 1000), model, status: 'completed',
+          id,
+          object: 'response',
+          created_at: Math.floor(Date.now() / 1000),
+          model,
+          status: 'completed',
           stop_reason: encodeFinishReason(part.finishReason ?? null),
           usage: {
             input_tokens: part.usage?.inputTokens.total ?? 0,
@@ -227,10 +429,6 @@ class StreamEncoder {
   }
 }
 
-function sse(event: string, data: object): string {
-  return `event: ${event}\ndata: ${JSON.stringify({ type: event, ...data })}\n\n`;
-}
-
 // --- endpoint ---
 
 function createOpenAIResponsesEndpoint(options: Record<string, unknown>): Endpoint {
@@ -241,7 +439,7 @@ function createOpenAIResponsesEndpoint(options: Record<string, unknown>): Endpoi
       const log = ctx.logger;
 
       app.post('/v1/responses', async (c: any) => {
-        const body = await c.req.json();
+        const body = await c.req.json() as ResponsesRequest;
         log.debug(`[openai-responses] Request:\n${JSON.stringify(body, null, 2)}`);
         const req = decodeRequest(body);
 
@@ -255,7 +453,19 @@ function createOpenAIResponsesEndpoint(options: Record<string, unknown>): Endpoi
             new ReadableStream({
               async start(controller) {
                 const enc = new TextEncoder();
-                controller.enqueue(enc.encode(sse('response.created', { response: { id, object: 'response', created_at: Math.floor(Date.now() / 1000), model: req.model, status: 'in_progress' } })));
+                controller.enqueue(
+                  enc.encode(
+                    sse('response.created', {
+                      response: {
+                        id,
+                        object: 'response',
+                        created_at: Math.floor(Date.now() / 1000),
+                        model: req.model,
+                        status: 'in_progress',
+                      },
+                    })
+                  )
+                );
                 try {
                   for await (const part of stream) {
                     if (signal.aborted) break;
@@ -276,7 +486,14 @@ function createOpenAIResponsesEndpoint(options: Record<string, unknown>): Endpoi
                 }
               },
             }),
-            { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' } },
+            {
+              headers: {
+                'Content-Type': 'text/event-stream',
+                'Cache-Control': 'no-cache',
+                Connection: 'keep-alive',
+                'X-Accel-Buffering': 'no',
+              },
+            }
           );
         }
 
@@ -290,7 +507,12 @@ function createOpenAIResponsesEndpoint(options: Record<string, unknown>): Endpoi
         const models = ctx.models();
         return c.json({
           object: 'list',
-          data: models.map((m) => ({ id: m.id, object: 'model', created: Math.floor(Date.now() / 1000), owned_by: m.ownedBy ?? 'synax' })),
+          data: models.map((m) => ({
+            id: m.id,
+            object: 'model',
+            created: Math.floor(Date.now() / 1000),
+            owned_by: m.ownedBy ?? 'synax',
+          })),
         });
       });
     },

@@ -8,7 +8,7 @@ function decodeInput(input: any): LanguageMessage[] {
     const { type, role, content, call_id, name, arguments: args, output } = item;
 
     if (type === 'message' || role) {
-      const normalizedRole = role === 'developer' ? 'user' : role;
+      const normalizedRole = role;
       if (typeof content === 'string') {
         return { role: normalizedRole, content };
       }
@@ -27,7 +27,17 @@ function decodeInput(input: any): LanguageMessage[] {
     }
     if (type === 'function_call') return { role: 'assistant', content: [{ type: 'tool-call', toolCallId: call_id, toolName: name, input: args }] };
     if (type === 'function_call_output') {
-      const result = typeof output === 'string' ? { type: 'text', value: output } : output ?? { type: 'text', value: '' };
+      let result;
+      if (typeof output === 'string') {
+        try {
+          const parsed = JSON.parse(output);
+          result = { type: 'json' as const, value: parsed };
+        } catch {
+          result = { type: 'text' as const, value: output };
+        }
+      } else {
+        result = output ?? { type: 'text' as const, value: '' };
+      }
       return { role: 'tool', content: [{ type: 'tool-result', toolCallId: call_id, toolName: name || '', result }] };
     }
     return { role: 'user', content: '' };

@@ -132,8 +132,10 @@ function buildOptions(core: AiSdkCore, request: LanguageRequest) {
 // --- Generate (non-streaming) ---
 
 export async function generate(core: AiSdkCore, model: unknown, request: LanguageRequest): Promise<LanguageResponse> {
+  const system = toSystem(request.messages);
+  const messages = toMessages(request.messages);
   const options = buildOptions(core, request);
-  const result = await core.generateText({ model, prompt: request.messages, ...options });
+  const result = await core.generateText({ model, system, prompt: messages, ...options });
 
   const content: LanguageMessagePart[] = [];
   if (result.reasoning?.length) content.push({ type: 'reasoning', reasoning: result.reasoning });
@@ -170,8 +172,10 @@ export async function generate(core: AiSdkCore, model: unknown, request: Languag
 //   response-metadata, finish
 
 export async function* stream(core: AiSdkCore, model: unknown, request: LanguageRequest, logger?: Logger): AsyncGenerator<LanguageStreamPart> {
+  const system = toSystem(request.messages);
+  const messages = toMessages(request.messages);
   const options = buildOptions(core, request);
-  const result = core.streamText({ model, prompt: request.messages, ...options });
+  const result = core.streamText({ model, system, prompt: messages, ...options });
 
   yield { type: 'stream-start' };
 

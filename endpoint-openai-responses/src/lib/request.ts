@@ -59,6 +59,8 @@ export function decodeRequest(body: any): LanguageRequest {
     return result;
   });
 
+  const hasDeveloperRole = body.input?.some((item: any) => item.role === 'developer');
+
   const req: any = {
     model: body.model,
     messages: decodeInput(body.input),
@@ -82,6 +84,7 @@ export function decodeRequest(body: any): LanguageRequest {
   if (body.store !== undefined) openaiOptions.store = body.store;
   if (body.include) openaiOptions.include = body.include;
   if (body.prompt_cache_key) openaiOptions.promptCacheKey = body.prompt_cache_key;
+  if (hasDeveloperRole) openaiOptions.systemMessageMode = 'developer';
 
   if (Object.keys(openaiOptions).length > 0) {
     req.providerOptions = { openai: openaiOptions };

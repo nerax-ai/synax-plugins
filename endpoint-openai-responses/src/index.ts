@@ -149,8 +149,11 @@ function createOpenAIResponsesEndpoint(options: Record<string, unknown>): Endpoi
   return {
     basePath,
     registerRoutes(app: any, ctx: EndpointContext) {
+      const log = ctx.logger;
+
       app.post('/v1/responses', async (c: any) => {
         const body = await c.req.json();
+        log.debug(`[openai-responses] Request:\n${JSON.stringify(body, null, 2)}`);
         const req = decodeRequest(body);
 
         if (body.stream) {
@@ -166,14 +169,19 @@ function createOpenAIResponsesEndpoint(options: Record<string, unknown>): Endpoi
                 try {
                   for await (const part of stream) {
                     if (signal.aborted) break;
+                    log.debug(`[openai-responses] Stream part: ${JSON.stringify(part)}`);
                     if (part.type === 'response-metadata') continue;
                     const line = encodeStreamPart(part, req.model, id);
-                    if (line) controller.enqueue(enc.encode(line));
+                    if (line) {
+                      log.debug(`[openai-responses] SSE: ${line.trim()}`);
+                      controller.enqueue(enc.encode(line));
+                    }
                   }
+                  log.debug(`[openai-responses] Stream completed`);
                   controller.close();
                 } catch (e: any) {
                   const status = e?.statusCode ?? e?.status ?? 500;
-                  console.error(`[openai-responses] stream error ${status}: ${e?.message ?? e}`);
+                  log.error(`[openai-responses] stream error ${status}: ${e?.message ?? e}`);
                   controller.close();
                 }
               },
@@ -183,7 +191,9 @@ function createOpenAIResponsesEndpoint(options: Record<string, unknown>): Endpoi
         }
 
         const res = await ctx.language.generate(req);
-        return c.json(encodeResponse(res, res.usage?.inputTokens.total ?? 0));
+        const encoded = encodeResponse(res, res.usage?.inputTokens.total ?? 0);
+        log.debug(`[openai-responses] Response:\n${JSON.stringify(encoded, null, 2)}`);
+        return c.json(encoded);
       });
 
       app.get('/v1/models', (c: any) => {

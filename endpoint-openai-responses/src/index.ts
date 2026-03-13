@@ -192,8 +192,8 @@ class StreamEncoder {
     }
     if (part.type === 'tool-input-end') {
       const idx = this.idToIndex.get(part.id) ?? 0;
-      const arguments = this.toolArguments.get(part.id) ?? '';
-      const item = { id: part.id, type: 'function_call', arguments, status: 'completed' };
+      const args = this.toolArguments.get(part.id) ?? '';
+      const item = { id: part.id, type: 'function_call', arguments: args, status: 'completed' };
       return sse('response.output_item.done', { output_index: idx, item });
     }
 

@@ -22,7 +22,7 @@ function decodeInput(input: any): LanguageMessage[] {
     }
     if (type === 'function_call') return { role: 'assistant', content: [{ type: 'tool-call', toolCallId: call_id, toolName: name, input: args }] };
     if (type === 'function_call_output') {
-      const result = typeof output === 'string' ? { text: output } : output ?? {};
+      const result = typeof output === 'string' ? { type: 'text', value: output } : output ?? { type: 'text', value: '' };
       return { role: 'tool', content: [{ type: 'tool-result', toolCallId: call_id, toolName: name || '', output: result }] };
     }
     return { role: 'user', content: '' };

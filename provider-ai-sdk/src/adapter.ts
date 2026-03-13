@@ -188,14 +188,14 @@ export async function* stream(core: AiSdkCore, model: unknown, request: Language
       // --- Text ---
       case 'text-start':
         textId = p.id;
-        yield { type: 'text-start', id: textId! };
+        yield { type: 'text-start', id: textId!, providerMetadata: p.providerMetadata };
         break;
       case 'text-delta':
-        if (!textId) { textId = p.id ?? crypto.randomUUID(); yield { type: 'text-start', id: textId! }; }
-        yield { type: 'text-delta', id: textId!, delta: p.text ?? p.textDelta ?? '' };
+        if (!textId) { textId = p.id ?? crypto.randomUUID(); yield { type: 'text-start', id: textId!, providerMetadata: p.providerMetadata }; }
+        yield { type: 'text-delta', id: textId!, delta: p.text ?? p.textDelta ?? '', providerMetadata: p.providerMetadata };
         break;
       case 'text-end':
-        if (textId) { yield { type: 'text-end', id: textId }; textId = null; }
+        if (textId) { yield { type: 'text-end', id: textId, providerMetadata: p.providerMetadata }; textId = null; }
         break;
 
       // --- Reasoning ---

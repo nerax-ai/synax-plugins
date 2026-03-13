@@ -164,14 +164,18 @@ class StreamEncoder {
     if (part.type === 'text-start') {
       const idx = this.getOutputIndex(part.id);
       const msgId = part.id;
-      const item = { id: msgId, type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '' }], status: 'in_progress' };
+      const phase = (part.providerMetadata as any)?.openai?.phase;
+      const item: any = { id: msgId, type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '' }], status: 'in_progress' };
+      if (phase) item.phase = phase;
       return sse('response.output_item.added', { output_index: idx, item })
         + sse('response.content_part.added', { item_id: msgId, output_index: idx, content_index: 0, part: { type: 'output_text', text: '', annotations: [], logprobs: [] } });
     }
     if (part.type === 'text-end') {
       const idx = this.idToIndex.get(part.id) ?? 0;
       const msgId = part.id;
-      const item = { id: msgId, type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '' }], status: 'completed' };
+      const phase = (part.providerMetadata as any)?.openai?.phase;
+      const item: any = { id: msgId, type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '' }], status: 'completed' };
+      if (phase) item.phase = phase;
       return sse('response.content_part.done', { item_id: msgId, output_index: idx, content_index: 0, part: { type: 'output_text', text: '' } })
         + sse('response.output_item.done', { output_index: idx, item });
     }

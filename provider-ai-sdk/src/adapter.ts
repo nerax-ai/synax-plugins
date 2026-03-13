@@ -19,7 +19,7 @@ function toSystem(messages: LanguageMessage[]): string | undefined {
 }
 
 function toMessages(messages: LanguageMessage[]): unknown[] {
-  return messages.filter(m => m.role !== 'system' && m.role !== 'developer').flatMap((msg): unknown[] => {
+  return messages.filter(m => m.role !== 'system').flatMap((msg): unknown[] => {
     if (msg.role === 'user' || msg.role === 'assistant') {
       if (typeof msg.content === 'string') {
         return [{ role: msg.role, content: msg.content }];

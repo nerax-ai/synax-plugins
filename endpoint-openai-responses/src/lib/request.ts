@@ -8,15 +8,8 @@ function decodeInput(input: any): LanguageMessage[] {
     const { type, role, content, call_id, name, arguments: args, output } = item;
 
     if (type === 'message' || role) {
-      const normalizedRole = role === 'developer' ? 'user' : role;
-      const baseMessage: any = { role: normalizedRole };
-
-      if (role === 'developer') {
-        baseMessage.providerMetadata = { openai: { originalRole: 'developer' } };
-      }
-
       if (typeof content === 'string') {
-        return { ...baseMessage, content };
+        return { role, content };
       }
       if (Array.isArray(content)) {
         const parts = content
@@ -27,9 +20,9 @@ function decodeInput(input: any): LanguageMessage[] {
           return null as any;
         }
 
-        return { ...baseMessage, content: parts };
+        return { role, content: parts };
       }
-      return { ...baseMessage, content: '' };
+      return { role, content: '' };
     }
     if (type === 'function_call') return { role: 'assistant', content: [{ type: 'tool-call', toolCallId: call_id, toolName: name, input: args }] };
     if (type === 'function_call_output') {

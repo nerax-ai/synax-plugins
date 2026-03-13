@@ -190,6 +190,12 @@ function createOpenAIResponsesEndpoint(options: Record<string, unknown>): Endpoi
 
 // --- plugin ---
 
-export function setup(ctx: { register(type: 'endpoint', id: string, factory: (options: Record<string, unknown>) => Endpoint): void }) {
-  ctx.register('endpoint', 'openai-responses', createOpenAIResponsesEndpoint);
+const schema = {
+  fields: [
+    { name: 'basePath', type: 'string', description: 'Base path for the endpoint', default: '/' }
+  ]
+};
+
+export function setup(ctx: { register(type: 'endpoint', id: string, factory: (options: Record<string, unknown>) => Endpoint, options?: { schema?: unknown }): void }) {
+  ctx.register('endpoint', 'openai-responses', createOpenAIResponsesEndpoint, { schema });
 }

@@ -287,6 +287,12 @@ function createAnthropicEndpoint(options: Record<string, unknown>): Endpoint {
 
 // --- plugin ---
 
-export function setup(ctx: { register(type: 'endpoint', id: string, factory: (options: Record<string, unknown>) => Endpoint): void }) {
-  ctx.register('endpoint', 'anthropic', createAnthropicEndpoint);
+const schema = {
+  fields: [
+    { name: 'basePath', type: 'string', description: 'Base path for the endpoint', default: '/' }
+  ]
+};
+
+export function setup(ctx: { register(type: 'endpoint', id: string, factory: (options: Record<string, unknown>) => Endpoint, options?: { schema?: unknown }): void }) {
+  ctx.register('endpoint', 'anthropic', createAnthropicEndpoint, { schema });
 }

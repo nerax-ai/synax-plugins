@@ -19,7 +19,7 @@ function toSystem(messages: LanguageMessage[]): string | undefined {
 }
 
 function toMessages(messages: LanguageMessage[]): unknown[] {
-  return messages.filter(m => m.role !== 'system').flatMap((msg): unknown[] => {
+  return messages.filter(m => m.role !== 'system' && m.role !== 'developer').flatMap((msg): unknown[] => {
     if (msg.role === 'user' || msg.role === 'assistant') {
       if (typeof msg.content === 'string') {
         return [{ role: msg.role, content: msg.content }];
@@ -125,15 +125,15 @@ function buildOptions(core: AiSdkCore, request: LanguageRequest) {
     tools,
     toolChoice,
     abortSignal: request.abortSignal,
+    ...(request.providerOptions && { providerOptions: request.providerOptions }),
   };
 }
 
 // --- Generate (non-streaming) ---
 
 export async function generate(core: AiSdkCore, model: unknown, request: LanguageRequest): Promise<LanguageResponse> {
-  const system = toSystem(request.messages);
-  const messages = toMessages(request.messages);
-  const result = await core.generateText({ model, system, messages, ...buildOptions(core, request) });
+  const options = buildOptions(core, request);
+  const result = await core.generateText({ model, prompt: request.messages, ...options });
 
   const content: LanguageMessagePart[] = [];
   if (result.reasoning?.length) content.push({ type: 'reasoning', reasoning: result.reasoning });
@@ -170,9 +170,8 @@ export async function generate(core: AiSdkCore, model: unknown, request: Languag
 //   response-metadata, finish
 
 export async function* stream(core: AiSdkCore, model: unknown, request: LanguageRequest, logger?: Logger): AsyncGenerator<LanguageStreamPart> {
-  const system = toSystem(request.messages);
-  const messages = toMessages(request.messages);
-  const result = core.streamText({ model, system, messages, ...buildOptions(core, request) });
+  const options = buildOptions(core, request);
+  const result = core.streamText({ model, prompt: request.messages, ...options });
 
   yield { type: 'stream-start' };
 

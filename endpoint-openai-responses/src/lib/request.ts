@@ -6,11 +6,10 @@ function decodeInput(input: any): LanguageMessage[] {
 
   return input.map((item: any): LanguageMessage => {
     const { type, role, content, call_id, name, arguments: args, output } = item;
-    const normalizedRole = role === 'developer' ? 'system' : role;
 
     if (type === 'message' || role) {
       if (typeof content === 'string') {
-        return { role: normalizedRole, content };
+        return { role, content };
       }
       if (Array.isArray(content)) {
         const parts = content.map((p: any) => {
@@ -19,9 +18,9 @@ function decodeInput(input: any): LanguageMessage[] {
           }
           return p;
         });
-        return { role: normalizedRole, content: parts };
+        return { role, content: parts };
       }
-      return { role: normalizedRole, content: '' };
+      return { role, content: '' };
     }
     if (type === 'function_call') return { role: 'assistant', content: [{ type: 'tool-call', toolCallId: call_id, toolName: name, input: args }] };
     if (type === 'function_call_output') return { role: 'tool', content: [{ type: 'tool-result', toolCallId: call_id, toolName: '', result: output ?? '' }] };

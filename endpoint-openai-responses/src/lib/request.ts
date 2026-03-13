@@ -13,12 +13,9 @@ function decodeInput(input: any): LanguageMessage[] {
         return { role: normalizedRole, content };
       }
       if (Array.isArray(content)) {
-        const parts = content.map((p: any) => {
-          if (p.type === 'input_text' || p.type === 'output_text') {
-            return { type: 'text', text: p.text };
-          }
-          return p;
-        }).filter((p: any) => p !== null && p !== undefined);
+        const parts = content
+          .filter((p: any) => p.type === 'input_text' || p.type === 'output_text')
+          .map((p: any) => ({ type: 'text' as const, text: p.text }));
         return { role: normalizedRole, content: parts.length ? parts : '' };
       }
       return { role: normalizedRole, content: '' };
@@ -26,7 +23,7 @@ function decodeInput(input: any): LanguageMessage[] {
     if (type === 'function_call') return { role: 'assistant', content: [{ type: 'tool-call', toolCallId: call_id, toolName: name, input: args }] };
     if (type === 'function_call_output') {
       const result = typeof output === 'string' ? { type: 'text', value: output } : output ?? { type: 'text', value: '' };
-      return { role: 'tool', content: [{ type: 'tool-result', toolCallId: call_id, toolName: name || '', output: result }] };
+      return { role: 'tool', content: [{ type: 'tool-result', toolCallId: call_id, toolName: name || '', result }] };
     }
     return { role: 'user', content: '' };
   });

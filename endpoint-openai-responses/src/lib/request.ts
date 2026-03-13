@@ -14,18 +14,14 @@ function decodeInput(input: any): LanguageMessage[] {
       }
       if (Array.isArray(content)) {
         const parts = content
-          .filter((p: any) => p.type === 'input_text' || p.type === 'output_text')
-          .map((p: any) => ({ type: 'text' as const, text: p.text || '' }));
+          .filter((p: any) => (p.type === 'input_text' || p.type === 'output_text') && p.text)
+          .map((p: any) => ({ type: 'text' as const, text: p.text }));
 
-        // 过滤掉所有空文本
-        const nonEmptyParts = parts.filter(p => p.text !== '');
-
-        if (nonEmptyParts.length === 0) {
-          // 如果没有非空内容，跳过这条消息
+        if (parts.length === 0) {
           return null as any;
         }
 
-        return { role: normalizedRole, content: nonEmptyParts };
+        return { role: normalizedRole, content: parts };
       }
       return { role: normalizedRole, content: '' };
     }

@@ -163,19 +163,22 @@ class StreamEncoder {
     // --- Text ---
     if (part.type === 'text-start') {
       const idx = this.getOutputIndex(part.id);
-      const item = { id: `msg_${id}`, type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '' }], status: 'in_progress' };
+      const msgId = part.id;
+      const item = { id: msgId, type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '' }], status: 'in_progress' };
       return sse('response.output_item.added', { output_index: idx, item })
-        + sse('response.content_part.added', { item_id: `msg_${id}`, output_index: idx, content_index: 0, part: { type: 'output_text', text: '', annotations: [], logprobs: [] } });
+        + sse('response.content_part.added', { item_id: msgId, output_index: idx, content_index: 0, part: { type: 'output_text', text: '', annotations: [], logprobs: [] } });
     }
     if (part.type === 'text-end') {
       const idx = this.idToIndex.get(part.id) ?? 0;
-      const item = { id: `msg_${id}`, type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '' }], status: 'completed' };
-      return sse('response.content_part.done', { item_id: `msg_${id}`, output_index: idx, content_index: 0, part: { type: 'output_text', text: '' } })
+      const msgId = part.id;
+      const item = { id: msgId, type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '' }], status: 'completed' };
+      return sse('response.content_part.done', { item_id: msgId, output_index: idx, content_index: 0, part: { type: 'output_text', text: '' } })
         + sse('response.output_item.done', { output_index: idx, item });
     }
     if (part.type === 'text-delta') {
       const idx = this.idToIndex.get(part.id) ?? 0;
-      return sse('response.output_text.delta', { item_id: `msg_${id}`, output_index: idx, content_index: 0, delta: part.delta });
+      const msgId = part.id;
+      return sse('response.output_text.delta', { item_id: msgId, output_index: idx, content_index: 0, delta: part.delta });
     }
 
     // --- Tool calls ---

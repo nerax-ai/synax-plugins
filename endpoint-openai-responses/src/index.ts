@@ -112,10 +112,15 @@ function encodeStreamPart(part: LanguageStreamPart, model: string, id: string): 
     return sse('response.output_text.delta', { item_id: `msg_${id}`, output_index: 0, content_index: 0, delta: part.delta });
   }
   if (part.type === 'tool-input-start') {
-    return sse('response.function_call_arguments.delta', { item_id: part.id, output_index: 1, delta: '' });
+    const item = { id: part.id, type: 'function_call', name: part.toolName, arguments: '', status: 'in_progress' };
+    return sse('response.output_item.added', { output_index: 1, item });
   }
   if (part.type === 'tool-input-delta') {
     return sse('response.function_call_arguments.delta', { item_id: part.id, output_index: 1, delta: part.delta });
+  }
+  if (part.type === 'tool-input-end') {
+    const item = { id: part.id, type: 'function_call', status: 'completed' };
+    return sse('response.output_item.done', { output_index: 1, item });
   }
   if (part.type === 'finish') {
     return sse('response.completed', {

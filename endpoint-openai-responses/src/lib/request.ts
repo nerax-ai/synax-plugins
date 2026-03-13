@@ -8,7 +8,7 @@ function decodeInput(input: any): LanguageMessage[] {
     const { type, role, content, call_id, name, arguments: args, output } = item;
 
     if (type === 'message' || role) {
-      const normalizedRole = role === 'developer' ? 'system' : role;
+      const normalizedRole = role === 'developer' ? 'user' : role;
       if (typeof content === 'string') {
         return { role: normalizedRole, content };
       }

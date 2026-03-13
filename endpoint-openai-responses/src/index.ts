@@ -127,6 +127,7 @@ class StreamEncoder {
   private outputIndex = 0;
   private idToIndex = new Map<string, number>();
   private toolArguments = new Map<string, string>();
+  private toolNames = new Map<string, string>();
 
   private getOutputIndex(id: string): number {
     let idx = this.idToIndex.get(id);
@@ -180,6 +181,7 @@ class StreamEncoder {
     // --- Tool calls ---
     if (part.type === 'tool-input-start') {
       const idx = this.getOutputIndex(part.id);
+      this.toolNames.set(part.id, part.toolName);
       const item = { id: part.id, type: 'function_call', name: part.toolName, arguments: '', status: 'in_progress' };
       return sse('response.output_item.added', { output_index: idx, item });
     }
@@ -191,9 +193,10 @@ class StreamEncoder {
       return sse('response.function_call_arguments.delta', { item_id: part.id, output_index: idx, delta: part.delta });
     }
     if (part.type === 'tool-input-end') {
-      const idx = this.idToIndex.get(part.id) ?? 0;
+      const idx = this.idToIndex.get(part.id) ?? 1;
       const args = this.toolArguments.get(part.id) ?? '';
-      const item = { id: part.id, type: 'function_call', arguments: args, status: 'completed' };
+      const name = this.toolNames.get(part.id) ?? '';
+      const item = { id: part.id, type: 'function_call', name, arguments: args, status: 'completed' };
       return sse('response.output_item.done', { output_index: idx, item });
     }
 

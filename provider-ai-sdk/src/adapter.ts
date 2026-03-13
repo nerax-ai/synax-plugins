@@ -8,6 +8,7 @@ import type {
   FinishReason,
   LanguageTokenUsage,
   LanguageMessagePart,
+  Logger,
 } from '@synax-ai/sdk';
 
 function toSystem(messages: LanguageMessage[]): string | undefined {
@@ -168,7 +169,7 @@ export async function generate(core: AiSdkCore, model: unknown, request: Languag
 //   tool-input-start, tool-input-delta, tool-input-end,
 //   response-metadata, finish
 
-export async function* stream(core: AiSdkCore, model: unknown, request: LanguageRequest): AsyncGenerator<LanguageStreamPart> {
+export async function* stream(core: AiSdkCore, model: unknown, request: LanguageRequest, logger?: Logger): AsyncGenerator<LanguageStreamPart> {
   const system = toSystem(request.messages);
   const messages = toMessages(request.messages);
   const result = core.streamText({ model, system, messages, ...buildOptions(core, request) });
@@ -181,6 +182,7 @@ export async function* stream(core: AiSdkCore, model: unknown, request: Language
 
   for await (const part of result.fullStream) {
     const p = part as any;
+    logger?.debug(`[stream] event: ${JSON.stringify(part)}`);
 
     switch (part.type) {
       // --- Text ---

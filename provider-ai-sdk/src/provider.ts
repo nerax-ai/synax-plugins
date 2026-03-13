@@ -45,7 +45,7 @@ export class AiSdkProvider implements Provider {
       },
       async *stream(request: LanguageRequest): AsyncGenerator<LanguageStreamPart> {
         await self.init();
-        yield* stream(self.core!, self.instance!(request.model), request);
+        yield* stream(self.core!, self.instance!(request.model), request, self.logger);
       },
       async models() { return []; },
     };

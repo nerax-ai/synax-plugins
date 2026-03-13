@@ -31,7 +31,31 @@ export function createFetch(id: string, logger: Logger, proxyUrl?: string): type
         logger.debug(`[${id}] Response: <failed to parse body>`);
       }
     } else {
+      // For SSE streams, wrap the response to log events
       logger.debug(`[${id}] Response:\nStatus: ${response.status}\nBody: <stream>`);
+      const originalIter = response.body as any;
+      const reader = originalIter.getReader();
+      const decoder = new TextDecoder();
+      const encoder = new TextEncoder();
+      
+      return new Response(
+        new ReadableStream({
+          async pull(controller) {
+            const { done, value } = await reader.read();
+            if (done) {
+              controller.close();
+              return;
+            }
+            const chunk = decoder.decode(value, { stream: true });
+            logger.debug(`[${id}] Stream chunk: ${chunk.trim()}`);
+            controller.enqueue(encoder.encode(chunk));
+          },
+        }),
+        {
+          status: response.status,
+          headers: response.headers,
+        },
+      ) as unknown as Response;
     }
 
     return response as unknown as Response;

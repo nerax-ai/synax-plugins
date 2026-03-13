@@ -33,29 +33,29 @@ export function createFetch(id: string, logger: Logger, proxyUrl?: string): type
     } else {
       // For SSE streams, wrap the response to log events
       logger.debug(`[${id}] Response:\nStatus: ${response.status}\nBody: <stream>`);
-      const originalIter = response.body as any;
-      const reader = originalIter.getReader();
+      const originalBody = response.body as any;
+      const reader = originalBody.getReader();
       const decoder = new TextDecoder();
       const encoder = new TextEncoder();
       
-      return new Response(
-        new ReadableStream({
-          async pull(controller) {
-            const { done, value } = await reader.read();
-            if (done) {
-              controller.close();
-              return;
-            }
-            const chunk = decoder.decode(value, { stream: true });
-            logger.debug(`[${id}] Stream chunk: ${chunk.trim()}`);
-            controller.enqueue(encoder.encode(chunk));
-          },
-        }),
-        {
-          status: response.status,
-          headers: response.headers,
+      const loggedStream = new ReadableStream({
+        async pull(controller) {
+          const { done, value } = await reader.read();
+          if (done) {
+            logger.debug(`[${id}] Stream done`);
+            controller.close();
+            return;
+          }
+          const chunk = decoder.decode(value, { stream: true });
+          logger.debug(`[${id}] Stream chunk: ${chunk.trim()}`);
+          controller.enqueue(encoder.encode(chunk));
         },
-      ) as unknown as Response;
+      });
+      
+      return new Response(loggedStream, {
+        status: response.status,
+        headers: response.headers,
+      }) as unknown as Response;
     }
 
     return response as unknown as Response;

@@ -16,11 +16,13 @@ function decodeInput(input: any): LanguageMessage[] {
 
   return input.map((item: any): LanguageMessage => {
     const { type, role, content, call_id, name, arguments: args, output } = item;
+    // Map 'developer' role (Anthropic) to 'system' for OpenAI compatibility
+    const normalizedRole = role === 'developer' ? 'system' : role;
     if (type === 'message' || role) {
-      if (typeof content === 'string') return { role, content } as LanguageMessage;
+      if (typeof content === 'string') return { role: normalizedRole, content } as LanguageMessage;
       if (Array.isArray(content)) {
         return {
-          role,
+          role: normalizedRole,
           content: content.map((p: any) =>
             (p.type === 'input_text' || p.type === 'output_text') ? { type: 'text', text: p.text } :
             (p.type === 'image_url') ? { type: 'file', data: new URL(p.image_url.url), mediaType: 'image/jpeg' } :
@@ -36,13 +38,21 @@ function decodeInput(input: any): LanguageMessage[] {
 }
 
 function decodeRequest(body: any): LanguageRequest {
+  // Convert tools parameters schema (OpenAI format) to inputSchema (Synax format)
+  const tools = body.tools?.map((tool: any) => {
+    if (tool.parameters && !tool.inputSchema) {
+      return { ...tool, inputSchema: tool.parameters };
+    }
+    return tool;
+  });
+
   return {
     model: body.model,
     messages: decodeInput(body.input),
     maxOutputTokens: body.max_output_tokens ?? undefined,
     temperature: body.temperature ?? undefined,
     topP: body.top_p ?? undefined,
-    tools: body.tools,
+    tools,
     toolChoice: body.tool_choice,
   };
 }

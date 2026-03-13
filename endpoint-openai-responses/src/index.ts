@@ -122,7 +122,11 @@ function encodeStreamPart(part: LanguageStreamPart, model: string, id: string): 
       response: {
         id, object: 'response', created_at: Math.floor(Date.now() / 1000), model, status: 'completed',
         stop_reason: encodeFinishReason(part.finishReason ?? null),
-        usage: { input_tokens: part.usage?.inputTokens.total ?? 0, output_tokens: part.usage?.outputTokens.total ?? 0 },
+        usage: {
+          input_tokens: part.usage?.inputTokens.total ?? 0,
+          output_tokens: part.usage?.outputTokens.total ?? 0,
+          total_tokens: (part.usage?.inputTokens.total ?? 0) + (part.usage?.outputTokens.total ?? 0),
+        },
       },
     });
   }

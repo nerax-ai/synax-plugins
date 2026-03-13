@@ -4,7 +4,13 @@ function decodeInput(input: any): LanguageMessage[] {
   if (typeof input === 'string') return [{ role: 'user', content: input }];
   if (!Array.isArray(input)) return [];
 
+  // First pass: collect all tool call names
   const toolCallNames = new Map<string, string>();
+  for (const item of input) {
+    if (item.type === 'function_call' && item.call_id && item.name) {
+      toolCallNames.set(item.call_id, item.name);
+    }
+  }
 
   return input.map((item: any): LanguageMessage | null => {
     const { type, role, content, call_id, name, arguments: args, output } = item;
@@ -29,7 +35,6 @@ function decodeInput(input: any): LanguageMessage[] {
       return { role: normalizedRole, content: '' };
     }
     if (type === 'function_call') {
-      if (call_id && name) toolCallNames.set(call_id, name);
       return { role: 'assistant', content: [{ type: 'tool-call', toolCallId: call_id, toolName: name, input: args }] };
     }
     if (type === 'function_call_output') {

@@ -182,7 +182,8 @@ class StreamEncoder {
     if (part.type === 'tool-input-start') {
       const idx = this.getOutputIndex(part.id);
       this.toolNames.set(part.id, part.toolName);
-      const item = { id: part.id, type: 'function_call', name: part.toolName, arguments: '', status: 'in_progress' };
+      // Use call_id for matching function call to output
+      const item = { id: part.id, type: 'function_call', call_id: part.id, name: part.toolName, arguments: '', status: 'in_progress' };
       return sse('response.output_item.added', { output_index: idx, item });
     }
     if (part.type === 'tool-input-delta') {
@@ -196,7 +197,8 @@ class StreamEncoder {
       const idx = this.idToIndex.get(part.id) ?? 1;
       const args = this.toolArguments.get(part.id) ?? '';
       const name = this.toolNames.get(part.id) ?? '';
-      const item = { id: part.id, type: 'function_call', name, arguments: args, status: 'completed' };
+      // Use call_id for matching function call to output
+      const item = { id: part.id, type: 'function_call', call_id: part.id, name, arguments: args, status: 'completed' };
       return sse('response.output_item.done', { output_index: idx, item });
     }
 

@@ -37,9 +37,16 @@ export function decodeRequest(body: any): LanguageRequest {
     return tool;
   });
 
+  const messages = decodeInput(body.input);
+
+  // Add instructions as system message at the beginning
+  if (body.instructions) {
+    messages.unshift({ role: 'system', content: body.instructions });
+  }
+
   return {
     model: body.model,
-    messages: decodeInput(body.input),
+    messages,
     maxOutputTokens: body.max_output_tokens ?? undefined,
     temperature: body.temperature ?? undefined,
     topP: body.top_p ?? undefined,

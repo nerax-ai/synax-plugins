@@ -4,7 +4,7 @@ function decodeInput(input: any): LanguageMessage[] {
   if (typeof input === 'string') return [{ role: 'user', content: input }];
   if (!Array.isArray(input)) return [];
 
-  return input.map((item: any): LanguageMessage => {
+  return input.map((item: any): LanguageMessage | null => {
     const { type, role, content, call_id, name, arguments: args, output } = item;
 
     if (type === 'message' || role) {
@@ -16,9 +16,16 @@ function decodeInput(input: any): LanguageMessage[] {
         const parts = content
           .filter((p: any) => p.type === 'input_text' || p.type === 'output_text')
           .map((p: any) => ({ type: 'text' as const, text: p.text || '' }));
-        if (parts.length === 0) return { role: normalizedRole, content: '' };
-        if (parts.length === 1 && parts[0].text === '') return { role: normalizedRole, content: '' };
-        return { role: normalizedRole, content: parts };
+
+        // 过滤掉所有空文本
+        const nonEmptyParts = parts.filter(p => p.text !== '');
+
+        if (nonEmptyParts.length === 0) {
+          // 如果没有非空内容，跳过这条消息
+          return null as any;
+        }
+
+        return { role: normalizedRole, content: nonEmptyParts };
       }
       return { role: normalizedRole, content: '' };
     }
@@ -28,7 +35,7 @@ function decodeInput(input: any): LanguageMessage[] {
       return { role: 'tool', content: [{ type: 'tool-result', toolCallId: call_id, toolName: name || '', result }] };
     }
     return { role: 'user', content: '' };
-  });
+  }).filter((msg): msg is LanguageMessage => msg !== null);
 }
 
 export function decodeRequest(body: any): LanguageRequest {

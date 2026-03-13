@@ -54,7 +54,7 @@ export function createFetch(id: string, logger: Logger, proxyUrl?: string): type
       
       return new Response(loggedStream, {
         status: response.status,
-        headers: response.headers,
+        headers: response.headers as HeadersInit,
       }) as unknown as Response;
     }
 

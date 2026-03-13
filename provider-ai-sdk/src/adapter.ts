@@ -50,15 +50,26 @@ function toMessages(messages: LanguageMessage[]): unknown[] {
       if (!Array.isArray(msg.content)) return [{ role: 'tool', content: msg.content }];
       return msg.content
         .filter((p: any) => p.type === 'tool-result')
-        .map((p: any) => ({
-          role: 'tool',
-          content: [{
-            type: 'tool-result',
-            toolCallId: p.toolCallId,
-            toolName: p.toolName,
-            result: p.result?.type && p.result?.value !== undefined ? p.result.value : p.result,
-          }],
-        }));
+        .map((p: any) => {
+          let outputObj: any;
+          if (p.result && p.result.type && p.result.value !== undefined) {
+            outputObj = p.result;
+          } else {
+            outputObj = typeof p.result === 'string'
+              ? { type: 'text', value: p.result }
+              : { type: 'json', value: p.result };
+          }
+          
+          return {
+            role: 'tool',
+            content: [{
+              type: 'tool-result',
+              toolCallId: p.toolCallId,
+              toolName: p.toolName,
+              output: outputObj,
+            }],
+          };
+        });
     }
 
     return [];

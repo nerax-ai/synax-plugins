@@ -8,13 +8,7 @@ function decodeInput(input: any): LanguageMessage[] {
     const { type, role, content, call_id, name, arguments: args, output } = item;
 
     if (type === 'message' || role) {
-      const msg: any = { role, type: 'message' };
-      if (typeof content === 'string') {
-        msg.content = content;
-      } else if (Array.isArray(content)) {
-        msg.content = content;
-      }
-      return msg;
+      return { role, content } as LanguageMessage;
     }
     if (type === 'function_call') return { role: 'assistant', content: [{ type: 'tool-call', toolCallId: call_id, toolName: name, input: args }] };
     if (type === 'function_call_output') return { role: 'tool', content: [{ type: 'tool-result', toolCallId: call_id, toolName: '', result: output ?? '' }] };

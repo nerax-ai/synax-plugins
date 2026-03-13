@@ -13,9 +13,12 @@ function decodeInput(input: any): LanguageMessage[] {
         return { role: normalizedRole, content };
       }
       if (Array.isArray(content)) {
-        const parts = content
-          .filter((p: any) => p.type === 'input_text' || p.type === 'output_text')
-          .map((p: any) => ({ type: 'text', text: p.text }));
+        const parts = content.map((p: any) => {
+          if (p.type === 'input_text' || p.type === 'output_text') {
+            return { type: 'text', text: p.text };
+          }
+          return p;
+        }).filter((p: any) => p !== null && p !== undefined);
         return { role: normalizedRole, content: parts.length ? parts : '' };
       }
       return { role: normalizedRole, content: '' };

@@ -37,16 +37,9 @@ export function decodeRequest(body: any): LanguageRequest {
     return tool;
   });
 
-  const messages = decodeInput(body.input);
-
-  // Add instructions as system message at the beginning
-  if (body.instructions) {
-    messages.unshift({ role: 'system', content: body.instructions });
-  }
-
-  return {
+  const req: any = {
     model: body.model,
-    messages,
+    messages: decodeInput(body.input),
     maxOutputTokens: body.max_output_tokens ?? undefined,
     temperature: body.temperature ?? undefined,
     topP: body.top_p ?? undefined,
@@ -58,4 +51,11 @@ export function decodeRequest(body: any): LanguageRequest {
     tools,
     toolChoice: body.tool_choice,
   };
+
+  // Pass instructions through provider options if present
+  if (body.instructions) {
+    req.providerOptions = { openai: { instructions: body.instructions } };
+  }
+
+  return req;
 }

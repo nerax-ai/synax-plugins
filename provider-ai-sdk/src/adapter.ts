@@ -259,7 +259,7 @@ export async function* stream(core: AiSdkCore, model: unknown, request: Language
           model: p.response?.modelId ?? request.model,
           created: Math.floor((p.response?.timestamp?.getTime() ?? Date.now()) / 1000),
         };
-        yield { type: 'finish', finishReason: toFinishReason(p.finishReason), usage: toUsage(p.usage) };
+        yield { type: 'finish', finishReason: toFinishReason(p.finishReason), usage: toUsage(p.totalUsage ?? p.usage) };
         break;
 
       case 'error':

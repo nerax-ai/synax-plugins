@@ -1,153 +1,32 @@
 import type {
-  LanguageRequest,
-  LanguageResponse,
-  LanguageStreamPart,
-  LanguageMessage,
-  LanguageToolCallContent,
   Endpoint,
   EndpointContext,
 } from '@synax-ai/sdk';
-
-// --- decode ---
-
-function decodeInput(input: any): LanguageMessage[] {
-  if (typeof input === 'string') return [{ role: 'user', content: input }];
-  if (!Array.isArray(input)) return [];
-
-  return input.map((item: any): LanguageMessage => {
-    const { type, role, content, call_id, name, arguments: args, output } = item;
-    if (type === 'message' || role) {
-      if (typeof content === 'string') return { role, content } as LanguageMessage;
-      if (Array.isArray(content)) {
-        return {
-          role,
-          content: content.map((p: any) =>
-            (p.type === 'input_text' || p.type === 'output_text') ? { type: 'text', text: p.text } :
-            (p.type === 'image_url') ? { type: 'file', data: new URL(p.image_url.url), mediaType: 'image/jpeg' } :
-            { type: 'text', text: '' }
-          ),
-        } as LanguageMessage;
-      }
-    }
-    if (type === 'function_call') return { role: 'assistant', content: [{ type: 'tool-call', toolCallId: call_id, toolName: name, input: args }] };
-    if (type === 'function_call_output') return { role: 'tool', content: [{ type: 'tool-result', toolCallId: call_id, toolName: '', result: output ?? '' }] };
-    return { role: 'user', content: '' };
-  });
-}
-
-function decodeRequest(body: any): LanguageRequest {
-  return {
-    model: body.model,
-    messages: decodeInput(body.input),
-    maxOutputTokens: body.max_output_tokens ?? undefined,
-    temperature: body.temperature ?? undefined,
-    topP: body.top_p ?? undefined,
-    tools: body.tools,
-    toolChoice: body.tool_choice,
-  };
-}
-
-// --- encode non-streaming ---
-
-function encodeFinishReason(r: string | null): string {
-  if (r === 'tool-calls') return 'tool_calls';
-  if (r === 'length') return 'max_output_tokens';
-  return 'stop';
-}
-
-function encodeResponse(res: LanguageResponse, inputTokens: number): any {
-  const choice = res.choices[0];
-  const content = choice?.message?.content;
-  const output: any[] = [];
-
-  const textParts: string[] = [];
-  const toolCalls: any[] = [];
-
-  if (typeof content === 'string') {
-    textParts.push(content);
-  } else if (Array.isArray(content)) {
-    for (const p of content) {
-      if (p.type === 'text') textParts.push(p.text);
-      else if (p.type === 'tool-call') {
-        const tc = p as LanguageToolCallContent;
-        toolCalls.push({ type: 'function_call', id: `fc_${tc.toolCallId}`, call_id: tc.toolCallId, name: tc.toolName, arguments: typeof tc.input === 'string' ? tc.input : JSON.stringify(tc.input) });
-      }
-    }
-  }
-
-  if (textParts.length) {
-    output.push({ type: 'message', id: `msg_${res.id}`, role: 'assistant', content: [{ type: 'output_text', text: textParts.join('') }], status: 'completed' });
-  }
-  output.push(...toolCalls);
-
-  return {
-    id: res.id,
-    object: 'response',
-    created_at: res.created,
-    model: res.model,
-    output,
-    status: 'completed',
-    stop_reason: encodeFinishReason(choice?.finishReason ?? null),
-    usage: res.usage ? {
-      input_tokens: inputTokens,
-      output_tokens: res.usage.outputTokens.total ?? 0,
-      total_tokens: inputTokens + (res.usage.outputTokens.total ?? 0),
-    } : undefined,
-  };
-}
-
-// --- encode streaming ---
-
-function encodeStreamPart(part: LanguageStreamPart, model: string, id: string): string | null {
-  if (part.type === 'text-start') {
-    const item = { id: `msg_${id}`, type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '' }], status: 'in_progress' };
-    return sse('response.output_item.added', { output_index: 0, item })
-      + sse('response.output_text.delta', { item_id: `msg_${id}`, output_index: 0, content_index: 0, delta: '' });
-  }
-  if (part.type === 'text-end') {
-    const item = { id: `msg_${id}`, type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '' }], status: 'completed' };
-    return sse('response.output_item.done', { output_index: 0, item });
-  }
-  if (part.type === 'text-delta') {
-    return sse('response.output_text.delta', { item_id: `msg_${id}`, output_index: 0, content_index: 0, delta: part.delta });
-  }
-  if (part.type === 'tool-input-start') {
-    return sse('response.function_call_arguments.delta', { item_id: part.id, output_index: 1, delta: '' });
-  }
-  if (part.type === 'tool-input-delta') {
-    return sse('response.function_call_arguments.delta', { item_id: part.id, output_index: 1, delta: part.delta });
-  }
-  if (part.type === 'finish') {
-    return sse('response.completed', {
-      response: {
-        id, object: 'response', created_at: Math.floor(Date.now() / 1000), model, status: 'completed',
-        stop_reason: encodeFinishReason(part.finishReason ?? null),
-        usage: { input_tokens: part.usage?.inputTokens.total ?? 0, output_tokens: part.usage?.outputTokens.total ?? 0 },
-      },
-    });
-  }
-  return null;
-}
+import { decodeRequest } from './lib/request';
+import { encodeResponse } from './lib/response';
+import { StreamEncoder } from './lib/streaming';
 
 function sse(event: string, data: object): string {
   return `event: ${event}\ndata: ${JSON.stringify({ type: event, ...data })}\n\n`;
 }
-
-// --- endpoint ---
 
 function createOpenAIResponsesEndpoint(options: Record<string, unknown>): Endpoint {
   const basePath = (options.basePath as string) ?? '/';
   return {
     basePath,
     registerRoutes(app: any, ctx: EndpointContext) {
+      const log = ctx.logger;
+
       app.post('/v1/responses', async (c: any) => {
         const body = await c.req.json();
+        log.debug(`[openai-responses] Request:\n${JSON.stringify(body, null, 2)}`);
         const req = decodeRequest(body);
 
         if (body.stream) {
           const signal: AbortSignal = c.req.raw.signal;
           const stream = ctx.language.stream({ ...req, abortSignal: signal });
           const id = `resp_${Math.random().toString(36).slice(2)}`;
+          const encoder = new StreamEncoder();
 
           return new Response(
             new ReadableStream({
@@ -157,14 +36,19 @@ function createOpenAIResponsesEndpoint(options: Record<string, unknown>): Endpoi
                 try {
                   for await (const part of stream) {
                     if (signal.aborted) break;
+                    log.debug(`[openai-responses] Stream part: ${JSON.stringify(part)}`);
                     if (part.type === 'response-metadata') continue;
-                    const line = encodeStreamPart(part, req.model, id);
-                    if (line) controller.enqueue(enc.encode(line));
+                    const line = encoder.encode(part, req.model, id);
+                    if (line) {
+                      log.debug(`[openai-responses] SSE: ${line.trim()}`);
+                      controller.enqueue(enc.encode(line));
+                    }
                   }
+                  log.debug(`[openai-responses] Stream completed`);
                   controller.close();
                 } catch (e: any) {
                   const status = e?.statusCode ?? e?.status ?? 500;
-                  console.error(`[openai-responses] stream error ${status}: ${e?.message ?? e}`);
+                  log.error(`[openai-responses] stream error ${status}: ${e?.message ?? e}`);
                   controller.close();
                 }
               },
@@ -174,7 +58,9 @@ function createOpenAIResponsesEndpoint(options: Record<string, unknown>): Endpoi
         }
 
         const res = await ctx.language.generate(req);
-        return c.json(encodeResponse(res, res.usage?.inputTokens.total ?? 0));
+        const encoded = encodeResponse(res, res.usage?.inputTokens.total ?? 0);
+        log.debug(`[openai-responses] Response:\n${JSON.stringify(encoded, null, 2)}`);
+        return c.json(encoded);
       });
 
       app.get('/v1/models', (c: any) => {

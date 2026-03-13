@@ -137,6 +137,17 @@ function encodeResponse(res: LanguageResponse): any {
   } else if (Array.isArray(content)) {
     for (const p of content) {
       if (p.type === 'text') blocks.push({ type: 'text', text: p.text });
+      else if (p.type === 'reasoning') {
+        // Convert reasoning to Anthropic's "thinking" block format
+        const reasoning = (p as any).reasoning;
+        let thinkingText = '';
+        if (Array.isArray(reasoning)) {
+          thinkingText = reasoning.map((r: any) => r.text ?? '').join('');
+        } else if (typeof reasoning === 'string') {
+          thinkingText = reasoning;
+        }
+        blocks.push({ type: 'thinking', thinking: thinkingText });
+      }
       else if (p.type === 'tool-call') {
         const tc = p as LanguageToolCallContent;
         blocks.push({ type: 'tool_use', id: tc.toolCallId, name: tc.toolName, input: typeof tc.input === 'string' ? JSON.parse(tc.input) : tc.input });
@@ -180,6 +191,21 @@ class StreamEncoder {
   encode(part: LanguageStreamPart, _model: string, _id: string): string | null {
     if (part.type === 'stream-start') return null;
 
+    // --- Reasoning (Anthropic calls this "thinking") ---
+    if (part.type === 'reasoning-start') {
+      const idx = this.getIndex(part.id);
+      return event('content_block_start', { index: idx, content_block: { type: 'thinking', thinking: '' } });
+    }
+    if (part.type === 'reasoning-delta') {
+      const idx = this.idToIndex.get(part.id) ?? 0;
+      return event('content_block_delta', { index: idx, delta: { type: 'thinking_delta', thinking: part.delta } });
+    }
+    if (part.type === 'reasoning-end') {
+      const idx = this.idToIndex.get(part.id) ?? 0;
+      return event('content_block_stop', { index: idx });
+    }
+
+    // --- Text ---
     if (part.type === 'text-start') {
       const idx = this.getIndex(part.id);
       return event('content_block_start', { index: idx, content_block: { type: 'text', text: '' } });
@@ -192,6 +218,8 @@ class StreamEncoder {
       const idx = this.idToIndex.get(part.id) ?? 0;
       return event('content_block_stop', { index: idx });
     }
+
+    // --- Tool calls ---
     if (part.type === 'tool-input-start') {
       const idx = this.getIndex(part.id);
       return event('content_block_start', { index: idx, content_block: { type: 'tool_use', id: part.id, name: part.toolName, input: {} } });
@@ -204,6 +232,8 @@ class StreamEncoder {
       const idx = this.idToIndex.get(part.id) ?? 0;
       return event('content_block_stop', { index: idx });
     }
+
+    // --- Finish ---
     if (part.type === 'finish') {
       const delta = event('message_delta', { delta: { stop_reason: encodeFinishReason(part.finishReason ?? null) }, usage: { output_tokens: part.usage?.outputTokens.total ?? 0 } });
       return delta + event('message_stop', {});

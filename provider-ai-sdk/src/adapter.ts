@@ -8,6 +8,7 @@ import type {
   FinishReason,
   LanguageTokenUsage,
   LanguageMessagePart,
+  Logger,
 } from '@synax-ai/sdk';
 
 function toSystem(messages: LanguageMessage[]): string | undefined {
@@ -124,6 +125,7 @@ function buildOptions(core: AiSdkCore, request: LanguageRequest) {
     tools,
     toolChoice,
     abortSignal: request.abortSignal,
+    ...(request.providerOptions && { providerOptions: request.providerOptions }),
   };
 }
 
@@ -132,7 +134,8 @@ function buildOptions(core: AiSdkCore, request: LanguageRequest) {
 export async function generate(core: AiSdkCore, model: unknown, request: LanguageRequest): Promise<LanguageResponse> {
   const system = toSystem(request.messages);
   const messages = toMessages(request.messages);
-  const result = await core.generateText({ model, system, messages, ...buildOptions(core, request) });
+  const options = buildOptions(core, request);
+  const result = await core.generateText({ model, system, prompt: messages, ...options });
 
   const content: LanguageMessagePart[] = [];
   if (result.reasoning?.length) content.push({ type: 'reasoning', reasoning: result.reasoning });
@@ -168,10 +171,11 @@ export async function generate(core: AiSdkCore, model: unknown, request: Languag
 //   tool-input-start, tool-input-delta, tool-input-end,
 //   response-metadata, finish
 
-export async function* stream(core: AiSdkCore, model: unknown, request: LanguageRequest): AsyncGenerator<LanguageStreamPart> {
+export async function* stream(core: AiSdkCore, model: unknown, request: LanguageRequest, logger?: Logger): AsyncGenerator<LanguageStreamPart> {
   const system = toSystem(request.messages);
   const messages = toMessages(request.messages);
-  const result = core.streamText({ model, system, messages, ...buildOptions(core, request) });
+  const options = buildOptions(core, request);
+  const result = core.streamText({ model, system, prompt: messages, ...options });
 
   yield { type: 'stream-start' };
 
@@ -181,19 +185,20 @@ export async function* stream(core: AiSdkCore, model: unknown, request: Language
 
   for await (const part of result.fullStream) {
     const p = part as any;
+    logger?.debug(`[stream] event: ${JSON.stringify(part)}`);
 
     switch (part.type) {
       // --- Text ---
       case 'text-start':
         textId = p.id;
-        yield { type: 'text-start', id: textId! };
+        yield { type: 'text-start', id: textId!, providerMetadata: p.providerMetadata };
         break;
       case 'text-delta':
-        if (!textId) { textId = p.id ?? crypto.randomUUID(); yield { type: 'text-start', id: textId! }; }
-        yield { type: 'text-delta', id: textId!, delta: p.text ?? p.textDelta ?? '' };
+        if (!textId) { textId = p.id ?? crypto.randomUUID(); yield { type: 'text-start', id: textId!, providerMetadata: p.providerMetadata }; }
+        yield { type: 'text-delta', id: textId!, delta: p.text ?? p.textDelta ?? '', providerMetadata: p.providerMetadata };
         break;
       case 'text-end':
-        if (textId) { yield { type: 'text-end', id: textId }; textId = null; }
+        if (textId) { yield { type: 'text-end', id: textId, providerMetadata: p.providerMetadata }; textId = null; }
         break;
 
       // --- Reasoning ---
@@ -257,7 +262,7 @@ export async function* stream(core: AiSdkCore, model: unknown, request: Language
           model: p.response?.modelId ?? request.model,
           created: Math.floor((p.response?.timestamp?.getTime() ?? Date.now()) / 1000),
         };
-        yield { type: 'finish', finishReason: toFinishReason(p.finishReason), usage: toUsage(p.usage) };
+        yield { type: 'finish', finishReason: toFinishReason(p.finishReason), usage: toUsage(p.totalUsage ?? p.usage) };
         break;
 
       case 'error':

@@ -50,6 +50,12 @@ export async function createAiSdkInstance(
   const npmPackage = AI_SDK_PACKAGES[packageName];
   const factoryName = AI_SDK_FACTORY_NAMES[packageName];
 
+  if (!npmPackage) {
+    throw new Error(
+      `Unsupported package: '${packageName}'. Supported packages: ${Object.keys(AI_SDK_PACKAGES).join(', ')}`,
+    );
+  }
+
   const mod = await tryImport(npmPackage);
 
   const factory = mod[factoryName] as ((opts: unknown) => AiSdkInstance) | undefined;

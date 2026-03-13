@@ -15,8 +15,10 @@ function decodeInput(input: any): LanguageMessage[] {
       if (Array.isArray(content)) {
         const parts = content
           .filter((p: any) => p.type === 'input_text' || p.type === 'output_text')
-          .map((p: any) => ({ type: 'text' as const, text: p.text }));
-        return { role: normalizedRole, content: parts.length ? parts : '' };
+          .map((p: any) => ({ type: 'text' as const, text: p.text || '' }));
+        if (parts.length === 0) return { role: normalizedRole, content: '' };
+        if (parts.length === 1 && parts[0].text === '') return { role: normalizedRole, content: '' };
+        return { role: normalizedRole, content: parts };
       }
       return { role: normalizedRole, content: '' };
     }

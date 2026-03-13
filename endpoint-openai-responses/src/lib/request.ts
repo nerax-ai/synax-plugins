@@ -31,10 +31,11 @@ function decodeInput(input: any): LanguageMessage[] {
 
 export function decodeRequest(body: any): LanguageRequest {
   const tools = body.tools?.map((tool: any) => {
+    const result: any = { ...tool };
     if (tool.parameters && !tool.inputSchema) {
-      return { ...tool, inputSchema: tool.parameters };
+      result.inputSchema = tool.parameters;
     }
-    return tool;
+    return result;
   });
 
   const req: any = {

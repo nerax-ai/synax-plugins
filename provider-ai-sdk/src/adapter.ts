@@ -444,14 +444,17 @@ export async function* stream(core: AiSdkCore, instance: any, request: LanguageR
       case 'tool-call': {
         const callId = part.toolCallId;
         if (endedToolCalls.has(callId)) break;
+
+        // Skip tool calls with empty input to prevent validation errors
+        const input = part.input ?? {};
+        if (Object.keys(input).length === 0) {
+          endedToolCalls.add(callId);
+          break;
+        }
+
         if (textId) { yield { type: 'text-end', id: textId }; textId = null; }
         yield { type: 'tool-input-start', id: callId, toolName: part.toolName };
-        // AI SDK v6 TypedToolCall uses `input` (not `args`)
-        const input = part.input ?? {};
-        const inputStr = JSON.stringify(input);
-        if (inputStr !== '{}') {
-          yield { type: 'tool-input-delta', id: callId, delta: inputStr };
-        }
+        yield { type: 'tool-input-delta', id: callId, delta: JSON.stringify(input) };
         yield { type: 'tool-input-end', id: callId };
         endedToolCalls.add(callId);
         break;

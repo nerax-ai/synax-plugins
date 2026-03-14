@@ -351,10 +351,17 @@ export async function generate(core: AiSdkCore, instance: any, request: Language
 //   response-metadata, finish
 
 export async function* stream(core: AiSdkCore, instance: any, request: LanguageRequest, logger?: Logger): AsyncGenerator<LanguageStreamPart> {
+  if (logger) {
+    logger.debug(`[AiSdkAdapter] [stream] request:\n${JSON.stringify(request, null, 2)}`);
+  }
   const model = typeof instance === 'function' ? instance(request.model) : instance;
   const system = toSystem(request.messages, request);
   const messages = toMessages(request.messages, logger);
   const options = buildOptions(core, request);
+
+  if (logger) {
+    logger.debug(`[AiSdkAdapter] [stream] converted messages:\n${JSON.stringify(messages, null, 2)}`);
+  }
 
   const result = core.streamText({ model, system, messages, ...options } as Parameters<typeof core.streamText>[0]);
 

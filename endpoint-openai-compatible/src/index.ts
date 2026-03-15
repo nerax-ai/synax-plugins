@@ -6,6 +6,7 @@ import type {
   LanguageToolCallContent,
   Endpoint,
   EndpointContext,
+  Schema,
 } from '@synax-ai/sdk';
 
 export interface OpenAIToolCall {
@@ -41,7 +42,14 @@ function decodeMessages(messages: OpenAIMessage[]): LanguageMessage[] {
     if (m.role === 'tool') {
       return {
         role: 'tool',
-        content: [{ type: 'tool-result', toolCallId: m.tool_call_id ?? '', toolName: m.name ?? '', result: typeof m.content === 'string' ? { type: 'text', value: m.content } : { type: 'text', value: m.content ? JSON.stringify(m.content) : '' } }],
+        content: [{
+          type: 'tool-result',
+          toolCallId: m.tool_call_id ?? '',
+          toolName: m.name ?? '',
+          result: typeof m.content === 'string'
+            ? { type: 'text', value: m.content }
+            : { type: 'text', value: m.content ? JSON.stringify(m.content) : '' }
+        }],
       };
     }
     if (m.role === 'assistant' && m.tool_calls) {
@@ -55,7 +63,8 @@ function decodeMessages(messages: OpenAIMessage[]): LanguageMessage[] {
         })),
       };
     }
-    return { role: m.role, content: m.content ?? '' } as LanguageMessage;
+    const textContent = typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? '');
+    return { role: m.role, content: [{ type: 'text', text: textContent }] } as LanguageMessage;
   });
 }
 
@@ -67,7 +76,12 @@ function decodeRequest(body: Partial<OpenAIRequest>): LanguageRequest {
     temperature: body.temperature ?? undefined,
     topP: body.top_p ?? undefined,
     stopSequences: body.stop ? (Array.isArray(body.stop) ? body.stop : [body.stop]) : undefined,
-    tools: body.tools,
+    tools: body.tools?.map((t: any) => ({
+      type: 'function',
+      name: t.function?.name ?? t.name,
+      description: t.function?.description ?? t.description,
+      inputSchema: t.function?.parameters ?? t.inputSchema,
+    })),
     toolChoice: body.tool_choice,
     seed: body.seed ?? undefined,
   };
@@ -140,6 +154,7 @@ function createOpenAIEndpoint(options: Record<string, unknown>): Endpoint {
     registerRoutes(app: any, ctx: EndpointContext) {
       app.post('/v1/chat/completions', async (c: any) => {
         const body = await c.req.json();
+        ctx.logger.debug(`[API] [openai-compatible] Request:\n${JSON.stringify(body, null, 2)}`);
         const req = decodeRequest(body);
 
         if (body.stream) {
@@ -156,7 +171,10 @@ function createOpenAIEndpoint(options: Record<string, unknown>): Endpoint {
                   for await (const part of stream) {
                     if (signal.aborted) break;
                     const line = encodeStreamPart(part, model, id);
-                    if (line) controller.enqueue(enc.encode(line));
+                    if (line) {
+                      ctx.logger.debug(`[API] [openai-compatible] SSE: ${line.trim()}`);
+                      controller.enqueue(enc.encode(line));
+                    }
                   }
                   controller.enqueue(enc.encode('data: [DONE]\n\n'));
                   controller.close();
@@ -176,7 +194,9 @@ function createOpenAIEndpoint(options: Record<string, unknown>): Endpoint {
         }
 
         const res = await ctx.language.generate(req);
-        return c.json(encodeResponse(res));
+        const encoded = encodeResponse(res);
+        ctx.logger.debug(`[API] [openai-compatible] Response:\n${JSON.stringify(encoded, null, 2)}`);
+        return c.json(encoded);
       });
 
       app.get('/v1/models', (c: any) => {
@@ -192,10 +212,17 @@ function createOpenAIEndpoint(options: Record<string, unknown>): Endpoint {
 
 // --- plugin ---
 
-const schema = {
+const schema: Schema = {
   fields: [
-    { name: 'basePath', type: 'string', description: 'Base path for the endpoint', default: '/' }
-  ]
+    {
+      name: 'basePath',
+      type: 'string',
+      label: 'Base Path',
+      description: 'Base path for the API endpoint',
+      default: '/',
+      placeholder: '/v1',
+    },
+  ],
 };
 
 export function setup(ctx: { register(type: 'endpoint', id: string, factory: (options: Record<string, unknown>) => Endpoint, options?: { schema?: unknown }): void }) {

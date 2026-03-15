@@ -1,6 +1,7 @@
 import type {
   Endpoint,
   EndpointContext,
+  Schema,
 } from '@synax-ai/sdk';
 import { decodeRequest } from './lib/request';
 import { encodeResponse } from './lib/response';
@@ -40,14 +41,7 @@ function createOpenAIResponsesEndpoint(options: Record<string, unknown>): Endpoi
                     if (part.type === 'response-metadata') continue;
                     const line = encoder.encode(part, req.model, id);
                     if (line) {
-                      let logLine = line.trim();
-                      if (logLine.startsWith('data: {')) {
-                        try {
-                          const parsed = JSON.parse(logLine.slice(6));
-                          logLine = 'data: ' + JSON.stringify(parsed, null, 2).split('\n').join('\n  ');
-                        } catch {}
-                      }
-                      log.debug(`[API] [openai-responses] SSE:\n${logLine}`);
+                      log.debug(`[API] [openai-responses] SSE: ${line.trim()}`);
                       controller.enqueue(enc.encode(line));
                     }
                   }
@@ -83,10 +77,17 @@ function createOpenAIResponsesEndpoint(options: Record<string, unknown>): Endpoi
 
 // --- plugin ---
 
-const schema = {
+const schema: Schema = {
   fields: [
-    { name: 'basePath', type: 'string', description: 'Base path for the endpoint', default: '/' }
-  ]
+    {
+      name: 'basePath',
+      type: 'string',
+      label: 'Base Path',
+      description: 'Base path for the API endpoint',
+      default: '/',
+      placeholder: '/v1',
+    },
+  ],
 };
 
 export function setup(ctx: { register(type: 'endpoint', id: string, factory: (options: Record<string, unknown>) => Endpoint, options?: { schema?: unknown }): void }) {

@@ -1,5 +1,4 @@
 import type { AiSdkPackageName } from './types';
-import { AI_SDK_PACKAGES, AI_SDK_FACTORY_NAMES } from './types';
 import { generateText, streamText, jsonSchema } from 'ai';
 
 import type { LanguageModelV3 } from '@ai-sdk/provider';
@@ -42,22 +41,28 @@ export async function loadAiCore(): Promise<AiSdkCore> {
 }
 
 export async function createAiSdkInstance(
-  packageName: AiSdkPackageName,
+  packageName: string,
   options: { apiKey?: string; baseURL?: string; headers?: Record<string, string>; fetch?: typeof globalThis.fetch },
 ): Promise<AiSdkInstance> {
-  const npmPackage = AI_SDK_PACKAGES[packageName];
-  const factoryName = AI_SDK_FACTORY_NAMES[packageName];
-
-  if (!npmPackage) {
-    throw new Error(
-      `Unsupported package: '${packageName}'. Supported packages: ${Object.keys(AI_SDK_PACKAGES).join(', ')}`,
-    );
-  }
+  // Convert package name to @ai-sdk/xxx
+  const npmPackage = packageName.startsWith('@') ? packageName : `@ai-sdk/${packageName}`;
+  
+  // Derive factory name (e.g., openai -> createOpenAI, google -> createGoogleGenerativeAI)
+  let factoryName = `create${packageName.split('-').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join('')}`;
+  if (packageName === 'google') factoryName = 'createGoogleGenerativeAI';
+  if (packageName === 'google-vertex') factoryName = 'createVertex';
 
   const mod = await tryImport(npmPackage);
 
   const factory = mod[factoryName] as ((opts: unknown) => AiSdkInstance) | undefined;
-  if (!factory) throw new Error(`Factory '${factoryName}' not found in '${npmPackage}'`);
+  if (!factory) {
+    // Try to find any function starting with 'create' if the guessed name fails
+    const fallbackFactoryName = Object.keys(mod).find(k => k.startsWith('create') && typeof mod[k] === 'function');
+    if (fallbackFactoryName) {
+      return (mod[fallbackFactoryName] as any)(options);
+    }
+    throw new Error(`Factory '${factoryName}' not found in '${npmPackage}'. Available exports: ${Object.keys(mod).join(', ')}`);
+  }
 
   return factory(options);
 }

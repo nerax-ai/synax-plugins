@@ -41,11 +41,13 @@ export class AiSdkProvider implements Provider {
     return {
       async generate(request: LanguageRequest): Promise<LanguageResponse> {
         await self.init();
-        return generate(self.core!, self.instance!, request, self.logger);
+        const model = self.instance!(request.model);
+        return generate(model, request, self.logger);
       },
       async *stream(request: LanguageRequest): AsyncGenerator<LanguageStreamPart> {
         await self.init();
-        yield* stream(self.core!, self.instance!, request, self.logger);
+        const model = self.instance!(request.model);
+        yield* stream(model, request, self.logger);
       },
       async models() { return []; },
     };

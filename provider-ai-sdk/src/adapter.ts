@@ -1,5 +1,18 @@
-import type { AiSdkCore, AiSdkInstance } from './loader';
-import type { LanguageModelUsage, UserContent, AssistantContent, ToolContent, TextPart, FilePart } from 'ai';
+import type {
+  LanguageModelV3,
+  LanguageModelV3CallOptions,
+  LanguageModelV3Message,
+  LanguageModelV3TextPart,
+  LanguageModelV3FilePart,
+  LanguageModelV3ReasoningPart,
+  LanguageModelV3ToolCallPart,
+  LanguageModelV3ToolResultPart,
+  LanguageModelV3FunctionTool,
+  LanguageModelV3ToolChoice,
+  LanguageModelV3StreamPart,
+  LanguageModelV3FinishReason,
+} from '@ai-sdk/provider';
+
 import type {
   LanguageRequest,
   LanguageResponse,
@@ -18,122 +31,57 @@ import type {
   LanguageToolApprovalResponseContent,
 } from '@synax-ai/sdk';
 
-/** Assistant message content parts (excludes tool-result which belongs in tool messages) */
 type AssistantContentPart = LanguageTextContent | LanguageReasoningContent | LanguageToolCallContent;
 
-// ─── Helpers ────────────────────────────────────────────────────
+// ─── Message Conversion ─────────────────────────────────────────
 
-function toSystem(messages: LanguageMessage[], request?: LanguageRequest): string | undefined {
-  const parts = messages
-    .filter(m => m.role === 'system')
-    .map(m => {
-      if (typeof m.content === 'string') return m.content;
-      return (m.content as LanguageMessagePart[])
-        .filter((p): p is LanguageTextContent => p.type === 'text')
-        .map(p => p.text)
-        .join('\n\n');
-    });
-
-  // Pull instructions from extra or common provider-specific locations to ensure 
-  // they are not lost on non-GPT models that don't support an explicit 'instructions' field.
-  if (request?.extra?.instructions) {
-    parts.push(String(request.extra.instructions));
-  }
-
-  const openaiInstructions = (request?.providerOptions as any)?.openai?.instructions;
-  if (typeof openaiInstructions === 'string') {
-    parts.push(openaiInstructions);
-  }
-
-  return parts.length ? parts.join('\n\n') : undefined;
-}
-
-/**
- * Convert Synax messages → AI SDK ModelMessage[].
- *
- * AI SDK v6 message/content shapes:
- *   - ToolCallPart: { type:'tool-call', toolCallId, toolName, input }
- *   - ToolResultPart: { type:'tool-result', toolCallId, toolName, output }
- *   - TextPart: { type:'text', text }
- *
- * Synax SDK shapes:
- *   - LanguageToolCallContent: { type:'tool-call', toolCallId, toolName, input }
- *   - LanguageToolResultContent: { type:'tool-result', toolCallId, toolName, result }
- *
- * Since the two SDKs have slight differences in property names (e.g. `output`
- * vs `result`), and the AI SDK does not export `CoreMessage` in v6, we type
- * the return as the provider-utils `ModelMessage[]` equivalent via inline
- * object shapes.
- */
-function toMessages(messages: LanguageMessage[], logger?: Logger) {
-  // 1. Initial conversion pass with strict schema compliance
-  const converted = messages
-    .filter(m => m.role?.toLowerCase() !== 'system' && m.role)
+function toV3Messages(messages: LanguageMessage[], logger?: Logger): LanguageModelV3Message[] {
+  return messages
+    .filter(m => m.role && m.role.toLowerCase() !== 'system')
     .map(msg => {
       const role = msg.role!.toLowerCase();
 
       if (role === 'user') {
-        if (typeof msg.content === 'string') {
-          return { role: 'user' as const, content: msg.content || ' ' };
-        }
-        const parts = (Array.isArray(msg.content) ? msg.content : [msg.content]) as LanguageMessagePart[];
-        const content = parts.map((p): TextPart | FilePart => {
+        const parts = (msg.content as LanguageMessagePart[]) || [];
+        const content: Array<LanguageModelV3TextPart | LanguageModelV3FilePart> = parts.map(p => {
           if (p.type === 'text') return { type: 'text', text: (p as LanguageTextContent).text || '' };
           if (p.type === 'file') {
             const f = p as LanguageFileContent;
             return { type: 'file', data: f.data as any, mediaType: f.mediaType || 'application/octet-stream' };
           }
-          return { type: 'text', text: 'text' in p ? String((p as any).text || '') : JSON.stringify(p) };
+          return { type: 'text', text: JSON.stringify(p) };
         });
-
-        // Optimization: Flatten to string if it's just a single text part
-        if (content.length === 1 && content[0].type === 'text') {
-          return { role: 'user' as const, content: content[0].text || ' ' };
-        }
-        
         return { role: 'user' as const, content };
       }
 
       if (role === 'assistant') {
-        if (typeof msg.content === 'string') {
-          return { role: 'assistant' as const, content: msg.content || ' ' };
-        }
         const parts = (msg.content as AssistantContentPart[]) || [];
-        const content = parts.map(part => {
-          if (part.type === 'tool-call') {
-            return { 
-              type: 'tool-call' as const, 
-              toolCallId: part.toolCallId, 
-              toolName: part.toolName, 
-              input: part.input ?? {} 
+        const content: Array<LanguageModelV3TextPart | LanguageModelV3ReasoningPart | LanguageModelV3ToolCallPart | LanguageModelV3ToolResultPart> = parts.map(p => {
+          if (p.type === 'tool-call') {
+            return {
+              type: 'tool-call' as const,
+              toolCallId: p.toolCallId,
+              toolName: p.toolName,
+              input: p.input ?? {}
             };
           }
-          if (part.type === 'reasoning') {
-            return { type: 'reasoning' as const, text: part.reasoning || '' };
+          if (p.type === 'reasoning') {
+            return { type: 'reasoning' as const, text: p.reasoning || '' };
           }
-          return { type: 'text' as const, text: (part as LanguageTextContent).text || '' };
+          return { type: 'text' as const, text: (p as LanguageTextContent).text || '' };
         });
-
-        // Optimization: Flatten to string if it's just a single text part
-        if (content.length === 1 && content[0].type === 'text') {
-          return { role: 'assistant' as const, content: content[0].text || ' ' };
-        }
-        
-        return { role: 'assistant' as const, content: content.length > 0 ? content : ' ' };
+        return { role: 'assistant' as const, content };
       }
 
       if (role === 'tool') {
-        const parts = (Array.isArray(msg.content) ? msg.content : []) as LanguageMessagePart[];
-        const content = parts
+        const parts = (msg.content as LanguageMessagePart[]) || [];
+        const content: Array<LanguageModelV3ToolResultPart | any> = parts
           .map(p => {
             if (p.type === 'tool-result') {
-              let res = p.result;
-              
-              // Ensure outcome is a valid ToolResultOutput { type, value }
+              let res = p.output;
               if (!res || typeof res !== 'object' || !('type' in res)) {
                 res = { type: 'text', value: String(res ?? 'success') };
               }
-              
               return {
                 type: 'tool-result' as const,
                 toolCallId: p.toolCallId,
@@ -152,110 +100,115 @@ function toMessages(messages: LanguageMessage[], logger?: Logger) {
             return null;
           })
           .filter((p): p is NonNullable<typeof p> => p !== null);
-
-        return { role: 'tool' as const, content: content as any[] };
+        return { role: 'tool' as const, content };
       }
 
-      // Fallback for unknown roles
-      return { role: 'user' as const, content: '' };
+      return { role: 'user' as const, content: [] };
     })
-    .filter(m => {
-      // AI SDK requires non-empty content for array-based messages
-      if (Array.isArray(m.content) && m.content.length === 0) return false;
-      return true;
+    .filter(m => Array.isArray(m.content) && m.content.length > 0);
+}
+
+function toSystem(messages: LanguageMessage[], request?: LanguageRequest): string | undefined {
+  const parts = messages
+    .filter(m => m.role === 'system')
+    .map(m => {
+      if (typeof m.content === 'string') return m.content;
+      return (m.content as LanguageMessagePart[])
+        .filter((p): p is LanguageTextContent => p.type === 'text')
+        .map(p => p.text)
+        .join('\n\n');
     });
 
-  // 2. Reorder messages to satisfy 'tool results must follow assistant tool-calls' constraint
-  const finalMessages: typeof converted = [];
-  const handledToolMessageIds = new Set<number>();
-  
-  for (let i = 0; i < converted.length; i++) {
-    const msg = converted[i];
-    if (handledToolMessageIds.has(i)) continue;
-    
-    finalMessages.push(msg);
-    
-    // Check if current message is an assistant making tool calls
-    if (msg.role === 'assistant' && Array.isArray(msg.content) && msg.content.some(c => c.type === 'tool-call')) {
-      const toolCallIds = new Set(
-        msg.content
-          .filter(c => c.type === 'tool-call')
-          .map(c => (c as any).toolCallId)
-      );
-      
-      // Look ahead for matching results
-      for (let j = i + 1; j < converted.length; j++) {
-        const nextMsg = converted[j];
-        if (nextMsg.role === 'tool' && !handledToolMessageIds.has(j)) {
-          const nextContentParts = Array.isArray(nextMsg.content) ? nextMsg.content : [];
-          const matchingParts = nextContentParts.filter(p => p.type === 'tool-result' && toolCallIds.has(p.toolCallId));
-          const remainingParts = nextContentParts.filter(p => !matchingParts.includes(p));
-          
-          if (matchingParts.length > 0) {
-            finalMessages.push({ role: 'tool', content: matchingParts });
-            matchingParts.forEach(p => toolCallIds.delete(p.toolCallId));
-            
-            if (remainingParts.length === 0) {
-              handledToolMessageIds.add(j);
-            } else {
-              (nextMsg as any).content = remainingParts;
-            }
-          }
-          
-          if (toolCallIds.size === 0) break;
-        }
-      }
-    }
+  if (request?.extra?.instructions) {
+    parts.push(String(request.extra.instructions));
   }
 
-  return finalMessages;
+  const openaiInstructions = (request?.providerOptions as any)?.openai?.instructions;
+  if (typeof openaiInstructions === 'string') {
+    parts.push(openaiInstructions);
+  }
+
+  return parts.length ? parts.join('\n\n') : undefined;
 }
 
 // ─── Tool Conversion ────────────────────────────────────────────
-// CRITICAL: AI SDK reads `inputSchema` (not `parameters`) from tool definitions.
 
-function toTools(core: AiSdkCore, tools: LanguageTool[]): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-  for (const tool of tools) {
-    if (tool.type !== 'function') continue;
-    const schema = tool.inputSchema && Object.keys(tool.inputSchema).length > 0
-      ? core.jsonSchema(tool.inputSchema)
-      : core.jsonSchema({ type: 'object', properties: {} });
-    result[tool.name] = { description: tool.description, inputSchema: schema };
+function toV3Tools(tools: LanguageTool[]): LanguageModelV3FunctionTool[] {
+  return tools
+    .filter(t => (t as any).type === 'function' || (t as any).name)
+    .map(t => {
+      const tool = t as any;
+      return {
+        type: 'function' as const,
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema || { type: 'object', properties: {} },
+      };
+    });
+}
+
+function toV3ToolChoice(choice?: any): LanguageModelV3ToolChoice | undefined {
+  if (!choice) return undefined;
+  if (typeof choice === 'string') {
+    if (choice === 'auto') return { type: 'auto' };
+    if (choice === 'none') return { type: 'none' };
+    if (choice === 'required') return { type: 'required' };
   }
-  return result;
+  if (typeof choice === 'object' && choice.type === 'function') {
+    return { type: 'tool', toolName: choice.function.name };
+  }
+  return undefined;
 }
 
 const FINISH_MAP: Record<string, FinishReason> = {
-  stop: 'stop', length: 'length', 'tool-calls': 'tool-calls',
-  'content-filter': 'content-filter', error: 'error', other: 'other',
+  stop: 'stop',
+  length: 'length',
+  'tool-calls': 'tool-calls',
+  'content-filter': 'content-filter',
+  error: 'error',
+  other: 'other',
 };
 
-function toFinishReason(reason: string): FinishReason {
-  return FINISH_MAP[reason] ?? 'other';
+function toFinishReason(reason: LanguageModelV3FinishReason): FinishReason {
+  return FINISH_MAP[reason.unified] ?? 'other';
 }
 
-function toUsage(usage?: LanguageModelUsage): LanguageTokenUsage {
+function toUsage(usage?: any): LanguageTokenUsage {
   return {
-    inputTokens:  { total: usage?.inputTokens ?? 0, noCache: usage?.inputTokenDetails?.noCacheTokens, cacheRead: usage?.inputTokenDetails?.cacheReadTokens, cacheWrite: usage?.inputTokenDetails?.cacheWriteTokens },
-    outputTokens: { total: usage?.outputTokens ?? 0, reasoning: usage?.outputTokenDetails?.reasoningTokens },
+    inputTokens: {
+      total: usage?.inputTokens?.total ?? 0,
+      noCache: usage?.inputTokens?.noCache,
+      cacheRead: usage?.inputTokens?.cacheRead,
+      cacheWrite: usage?.inputTokens?.cacheWrite,
+    },
+    outputTokens: {
+      total: usage?.outputTokens?.total ?? 0,
+      reasoning: usage?.outputTokens?.reasoning,
+    },
   };
 }
 
-function buildOptions(core: AiSdkCore, request: LanguageRequest) {
-  const tools = request.tools?.length ? toTools(core, request.tools) : undefined;
+// ─── Generate ───────────────────────────────────────────────────
 
-  let toolChoice: 'auto' | 'none' | 'required' | { type: 'tool'; toolName: string } | undefined = undefined;
-  if (request.toolChoice) {
-    if (typeof request.toolChoice === 'string') {
-      toolChoice = request.toolChoice as 'auto' | 'none' | 'required';
-    } else if (typeof request.toolChoice === 'object' && request.toolChoice.type === 'function') {
-      toolChoice = { type: 'tool', toolName: request.toolChoice.function.name };
-    }
+export async function generate(
+  model: LanguageModelV3,
+  request: LanguageRequest,
+  logger?: Logger
+): Promise<LanguageResponse> {
+  if (logger?.debug) {
+    logger.debug(`[V3Adapter] [generate] request:\n${JSON.stringify(request, null, 2)}`);
   }
 
-  return {
-    maxTokens: request.maxOutputTokens,
+  const prompt = toV3Messages(request.messages, logger);
+  const systemMessage = toSystem(request.messages, request);
+
+  if (systemMessage) {
+    prompt.unshift({ role: 'system', content: systemMessage });
+  }
+
+  const options: LanguageModelV3CallOptions = {
+    prompt,
+    maxOutputTokens: request.maxOutputTokens,
     temperature: request.temperature,
     topP: request.topP,
     topK: request.topK,
@@ -263,226 +216,146 @@ function buildOptions(core: AiSdkCore, request: LanguageRequest) {
     frequencyPenalty: request.frequencyPenalty,
     stopSequences: request.stopSequences,
     seed: request.seed,
-    tools,
-    toolChoice,
+    tools: request.tools?.length ? toV3Tools(request.tools) : undefined,
+    toolChoice: toV3ToolChoice(request.toolChoice),
     abortSignal: request.abortSignal,
-    ...(request.providerOptions && { providerOptions: request.providerOptions }),
+    providerOptions: request.providerOptions,
+    ...(request.extra as any),
   };
-}
 
-// ─── Generate (non-streaming) ───────────────────────────────────
-
-export async function generate(core: AiSdkCore, instance: any, request: LanguageRequest, logger?: Logger): Promise<LanguageResponse> {
-  if (logger) {
-    logger.debug(`[AiSdkAdapter] [generate] request:\n${JSON.stringify(request, null, 2)}`);
-  }
-  const model = typeof instance === 'function' ? instance(request.model) : instance;
-  const system = toSystem(request.messages, request);
-  const messages = toMessages(request.messages, logger);
-  const options = buildOptions(core, request);
-
-  if (logger) {
-    logger.debug(`[AiSdkAdapter] [generate] converted messages:\n${JSON.stringify(messages, null, 2)}`);
-  }
-
-  // AI SDK's generateText expects `LanguageModel` for `model`, and `messages`
-  // for the prompt. LanguageModelV3 ⊂ LanguageModel so the cast is safe.
-  const result = await core.generateText({ model, system, messages, ...options } as Parameters<typeof core.generateText>[0]);
+  const result = await model.doGenerate(options);
 
   const content: AssistantContentPart[] = [];
 
-  // result.reasoningText is the concatenated string of all reasoning parts
-  if (result.reasoningText) {
-    content.push({ type: 'reasoning', reasoning: result.reasoningText });
-  }
-  if (result.text) {
-    content.push({ type: 'text', text: result.text });
-  }
-  // result.toolCalls[].input is the parsed tool call input (AI SDK v6 uses `input`, not `args`)
-  for (const tc of result.toolCalls) {
-    content.push({
-      type: 'tool-call',
-      toolCallId: tc.toolCallId,
-      toolName: tc.toolName,
-      input: tc.input,
-    });
+  for (const part of result.content) {
+    if (part.type === 'text') {
+      content.push({ type: 'text', text: part.text });
+    } else if (part.type === 'reasoning') {
+      content.push({ type: 'reasoning', reasoning: part.reasoning });
+    } else if (part.type === 'tool-call') {
+      content.push({
+        type: 'tool-call',
+        toolCallId: part.toolCallId,
+        toolName: part.toolName,
+        input: part.input,
+      });
+    }
   }
 
   return {
-    id: result.response.id ?? crypto.randomUUID(),
-    created: Math.floor(result.response.timestamp.getTime() / 1000),
-    model: result.response.modelId ?? request.model,
-    choices: [{
-      index: 0,
-      message: {
-        role: 'assistant',
-        content: content.length === 1 && content[0].type === 'text'
-          ? content[0].text
-          : content,
+    id: result.response?.id ?? crypto.randomUUID(),
+    created: Math.floor((result.response?.timestamp?.getTime() ?? Date.now()) / 1000),
+    model: result.response?.modelId ?? request.model,
+    choices: [
+      {
+        index: 0,
+        message: {
+          role: 'assistant',
+          content,
+        },
+        finishReason: toFinishReason(result.finishReason),
       },
-      finishReason: toFinishReason(result.finishReason),
-    }],
+    ],
     usage: toUsage(result.usage),
   };
 }
 
 // ─── Stream ─────────────────────────────────────────────────────
-//
-// AI SDK v6 fullStream events (TextStreamPart):
-//   start, start-step, text-start, text-delta, text-end,
-//   reasoning-start, reasoning-delta, reasoning-end,
-//   tool-input-start, tool-input-delta, tool-input-end,
-//   tool-call, tool-result, tool-error, tool-output-denied,
-//   source, file, finish-step, finish, abort, error, raw
-//
-// AI SDK v6 TextStreamPart field names:
-//   text-delta      → { id, text }
-//   reasoning-delta → { id, text }
-//   tool-input-delta→ { id, delta }
-//   tool-input-start→ { id, toolName }
-//   tool-call       → { toolCallId, toolName, input }
-//   finish          → { finishReason, totalUsage }
-//   finish-step     → { response, usage, finishReason }
-//
-// Synax stream events:
-//   stream-start, text-start, text-delta, text-end,
-//   reasoning-start, reasoning-delta, reasoning-end,
-//   tool-input-start, tool-input-delta, tool-input-end,
-//   response-metadata, finish
 
-export async function* stream(core: AiSdkCore, instance: any, request: LanguageRequest, logger?: Logger): AsyncGenerator<LanguageStreamPart> {
-  if (logger) {
-    logger.debug(`[AiSdkAdapter] [stream] request:\n${JSON.stringify(request, null, 2)}`);
-  }
-  const model = typeof instance === 'function' ? instance(request.model) : instance;
-  const system = toSystem(request.messages, request);
-  const messages = toMessages(request.messages, logger);
-  const options = buildOptions(core, request);
-
-  if (logger) {
-    logger.debug(`[AiSdkAdapter] [stream] converted messages:\n${JSON.stringify(messages, null, 2)}`);
+export async function* stream(
+  model: LanguageModelV3,
+  request: LanguageRequest,
+  logger?: Logger
+): AsyncGenerator<LanguageStreamPart> {
+  if (logger?.debug) {
+    logger.debug(`[V3Adapter] [stream] request:\n${JSON.stringify(request, null, 2)}`);
   }
 
-  const result = core.streamText({ model, system, messages, ...options } as Parameters<typeof core.streamText>[0]);
+  const prompt = toV3Messages(request.messages, logger);
+  const systemMessage = toSystem(request.messages, request);
+
+  if (systemMessage) {
+    prompt.unshift({ role: 'system', content: systemMessage });
+  }
+
+  const options: LanguageModelV3CallOptions = {
+    prompt,
+    maxOutputTokens: request.maxOutputTokens,
+    temperature: request.temperature,
+    topP: request.topP,
+    topK: request.topK,
+    presencePenalty: request.presencePenalty,
+    frequencyPenalty: request.frequencyPenalty,
+    stopSequences: request.stopSequences,
+    seed: request.seed,
+    tools: request.tools?.length ? toV3Tools(request.tools) : undefined,
+    toolChoice: toV3ToolChoice(request.toolChoice),
+    abortSignal: request.abortSignal,
+    providerOptions: request.providerOptions,
+    ...(request.extra as any),
+  };
+
+  const result = await model.doStream(options);
 
   yield { type: 'stream-start' };
 
-  let textId: string | null = null;
-  let reasoningId: string | null = null;
   let lastResponse: { id: string; modelId: string; timestamp: Date } | null = null;
-  const endedToolCalls = new Set<string>();
 
-  for await (const part of result.fullStream) {
-    logger?.debug(`[SDK] [stream] event:\n${JSON.stringify(part, null, 2)}`);
+  for await (const part of result.stream) {
+    logger?.debug(`[V3Adapter] [stream] event:\n${JSON.stringify(part, null, 2)}`);
 
     switch (part.type) {
-      // --- Text ---
       case 'text-start':
-        textId = part.id;
-        yield { type: 'text-start', id: textId, providerMetadata: part.providerMetadata };
+        yield { type: 'text-start', id: part.id, providerMetadata: part.providerMetadata };
         break;
       case 'text-delta':
-        if (!textId) {
-          textId = part.id ?? crypto.randomUUID();
-          yield { type: 'text-start', id: textId, providerMetadata: part.providerMetadata };
-        }
-        // AI SDK v6 TextStreamPart text-delta has `text`, Synax expects `delta`
-        yield { type: 'text-delta', id: textId, delta: part.text, providerMetadata: part.providerMetadata };
+        yield { type: 'text-delta', id: part.id, delta: part.delta, textDelta: part.delta, providerMetadata: part.providerMetadata } as any;
         break;
       case 'text-end':
-        if (textId) {
-          yield { type: 'text-end', id: textId, providerMetadata: part.providerMetadata };
-          textId = null;
-        }
+        yield { type: 'text-end', id: part.id, providerMetadata: part.providerMetadata };
         break;
 
-      // --- Reasoning ---
       case 'reasoning-start':
-        reasoningId = part.id;
-        yield { type: 'reasoning-start', id: reasoningId };
+        yield { type: 'reasoning-start', id: part.id };
         break;
       case 'reasoning-delta':
-        if (!reasoningId) {
-          reasoningId = part.id ?? crypto.randomUUID();
-          yield { type: 'reasoning-start', id: reasoningId };
-        }
-        // AI SDK v6 reasoning-delta has `text`, Synax expects `delta`
-        yield { type: 'reasoning-delta', id: reasoningId, delta: part.text };
+        yield { type: 'reasoning-delta', id: part.id, delta: part.delta, reasoningDelta: part.delta } as any;
         break;
       case 'reasoning-end':
-        if (reasoningId) {
-          yield { type: 'reasoning-end', id: reasoningId };
-          reasoningId = null;
-        }
+        yield { type: 'reasoning-end', id: part.id };
         break;
 
-      // --- Tool streaming input ---
-      case 'tool-input-start': {
-        // AI SDK v6 uses `id` for the tool call identifier
-        const callId = part.id;
-        if (textId) { yield { type: 'text-end', id: textId }; textId = null; }
-        yield { type: 'tool-input-start', id: callId, toolName: part.toolName };
+      case 'tool-input-start':
+        yield { type: 'tool-input-start', id: part.id, toolName: part.toolName };
         break;
-      }
-      case 'tool-input-delta': {
-        const callId = part.id;
-        if (!endedToolCalls.has(callId)) {
-          yield { type: 'tool-input-delta', id: callId, delta: part.delta };
-        }
+      case 'tool-input-delta':
+        yield { type: 'tool-input-delta', id: part.id, delta: part.delta };
         break;
-      }
-      case 'tool-input-end': {
-        const callId = part.id;
-        if (!endedToolCalls.has(callId)) {
-          yield { type: 'tool-input-end', id: callId };
-          endedToolCalls.add(callId);
-        }
-        break;
-      }
-
-      // --- Completed tool call ---
-      case 'tool-call': {
-        const callId = part.toolCallId;
-        if (endedToolCalls.has(callId)) break;
-
-        // Skip tool calls with empty input to prevent validation errors
-        const input = part.input ?? {};
-        if (Object.keys(input).length === 0) {
-          endedToolCalls.add(callId);
-          break;
-        }
-
-        if (textId) { yield { type: 'text-end', id: textId }; textId = null; }
-        yield { type: 'tool-input-start', id: callId, toolName: part.toolName };
-        yield { type: 'tool-input-delta', id: callId, delta: JSON.stringify(input) };
-        yield { type: 'tool-input-end', id: callId };
-        endedToolCalls.add(callId);
-        break;
-      }
-
-      // --- Finish step (captures response metadata) ---
-      case 'finish-step':
-        lastResponse = part.response;
+      case 'tool-input-end':
+        yield { type: 'tool-input-end', id: part.id };
         break;
 
-      // --- Finish ---
-      case 'finish':
-        if (textId) { yield { type: 'text-end', id: textId }; textId = null; }
-        if (reasoningId) { yield { type: 'reasoning-end', id: reasoningId }; reasoningId = null; }
+      case 'response-metadata':
+        lastResponse = { id: part.id, modelId: part.modelId, timestamp: part.timestamp };
         yield {
           type: 'response-metadata',
-          id: lastResponse?.id ?? '',
-          model: lastResponse?.modelId ?? request.model,
-          created: Math.floor((lastResponse?.timestamp?.getTime() ?? Date.now()) / 1000),
+          id: part.id,
+          model: part.modelId,
+          created: Math.floor(part.timestamp.getTime() / 1000),
         };
-        // AI SDK v6 finish event has `totalUsage`, not `usage`
-        yield { type: 'finish', finishReason: toFinishReason(part.finishReason), usage: toUsage(part.totalUsage) };
+        break;
+
+      case 'finish':
+        yield {
+          type: 'finish',
+          finishReason: toFinishReason(part.finishReason),
+          usage: toUsage(part.usage),
+        };
         break;
 
       case 'error':
         throw part.error;
 
-      // Ignore AI SDK internal events (start-step, start, abort, source, file, raw, etc.)
       default:
         break;
     }

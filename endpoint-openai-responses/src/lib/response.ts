@@ -15,9 +15,7 @@ export function encodeResponse(res: LanguageResponse, inputTokens: number): any 
   const toolCalls: any[] = [];
   let reasoningContent = '';
 
-  if (typeof content === 'string') {
-    textParts.push(content);
-  } else if (Array.isArray(content)) {
+  if (Array.isArray(content)) {
     for (const p of content) {
       if (p.type === 'text') textParts.push(p.text);
       else if (p.type === 'reasoning') {

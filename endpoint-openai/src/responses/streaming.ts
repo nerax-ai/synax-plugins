@@ -101,3 +101,7 @@ export class StreamEncoder {
     return null;
   }
 }
+
+export function sseEvent(event: string, data: object): string {
+  return sse(event, data);
+}

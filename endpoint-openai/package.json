@@ -1,5 +1,5 @@
 {
-  "name": "@synax-ai/endpoint-openai-compatible",
+  "name": "@synax-ai/endpoint-openai",
   "version": "0.0.1",
   "type": "module",
   "main": "./src/index.ts",

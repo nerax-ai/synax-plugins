@@ -31,7 +31,7 @@ function decodeInput(input: any): LanguageMessage[] {
         output_result = output ?? { type: 'text' as const, value: '' };
       }
       const toolName = name || toolCallNames.get(call_id) || '';
-      return { role: 'tool', content: [{ type: 'tool-result', toolCallId: call_id, toolName, output: output_result }] };
+      return { role: 'tool', content: [{ type: 'tool-result', toolCallId: call_id, toolName, result: output_result }] };
     }
 
     if (type === 'message' || role) {

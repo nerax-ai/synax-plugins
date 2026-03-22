@@ -103,8 +103,14 @@ export function encodeMessages(messages: LanguageMessage[]): { messages: Anthrop
 
   for (const msg of messages) {
     if (msg.role === 'system') {
-      // System message content is always a string in the SDK
-      systemParts.push(msg.content);
+      // System message content is an array of LanguageTextContent
+      if (Array.isArray(msg.content)) {
+        for (const part of msg.content) {
+          if (part.type === 'text' && part.text) {
+            systemParts.push(part.text);
+          }
+        }
+      }
       continue;
     }
 

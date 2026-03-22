@@ -83,6 +83,7 @@ export function createHttpClient(id: string, logger: Logger, config: HttpClientC
       throw new Error(`API Error: ${errorMessage}`);
     }
 
+    logger.debug(`[HTTP] [${id}] Response:\n${formatBody(JSON.stringify(data))}`);
     return data;
   };
 }

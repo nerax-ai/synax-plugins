@@ -23,7 +23,9 @@ function decodeContentBlock(block: AnthropicContentBlock): Array<LanguageTextCon
   if (block.type === 'text') {
     result.push({ type: 'text', text: block.text });
   } else if (block.type === 'thinking') {
-    result.push({ type: 'reasoning', reasoning: block.thinking });
+    const reasoningPart: LanguageReasoningContent & { signature?: string } = { type: 'reasoning', reasoning: block.thinking };
+    if (block.signature) reasoningPart.signature = block.signature;
+    result.push(reasoningPart);
   } else if (block.type === 'tool_use') {
     result.push({
       type: 'tool-call',
@@ -74,5 +76,8 @@ export function decodeResponse(response: AnthropicMessagesResponse): LanguageRes
       finishReason: decodeFinishReason(response.stop_reason ?? null),
     }],
     usage,
+    providerMetadata: {
+      stop_sequence: response.stop_sequence ?? null,
+    },
   };
 }

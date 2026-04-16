@@ -1,7 +1,24 @@
-import type { Endpoint, EndpointContext, Schema } from '@synax-ai/sdk';
+import type { Endpoint, EndpointContext } from '@synax-ai/sdk';
 import { decodeRequest } from './request';
 import { encodeResponse } from './response';
 import { StreamEncoder } from './streaming';
+
+// Inline Schema definition since @synax-ai/sdk doesn't export Schema in installed version
+interface SchemaField {
+  name: string;
+  type: 'string' | 'number' | 'boolean' | 'object' | 'array';
+  label?: string;
+  description?: string;
+  placeholder?: string;
+  required?: boolean;
+  secret?: boolean;
+  defaultValue?: unknown;
+  enum?: Array<{ value: string; label: string; description?: string }>;
+}
+
+interface Schema {
+  fields: SchemaField[];
+}
 
 function createAnthropicEndpoint(options: Record<string, unknown>): Endpoint {
   const basePath = (options.basePath as string) ?? '/';
@@ -17,35 +34,75 @@ function createAnthropicEndpoint(options: Record<string, unknown>): Endpoint {
           if (body.stream) {
             const signal: AbortSignal = c.req.raw.signal;
             const stream = ctx.language.stream({ ...req, abortSignal: signal });
-            const id = `msg_${Math.random().toString(36).slice(2)}`;
             const encoder = new StreamEncoder();
 
             return new Response(
               new ReadableStream({
                 async start(controller) {
                   const enc = new TextEncoder();
-                  const event = (type: string, data: object) => `event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`;
-                  controller.enqueue(enc.encode(event('message_start', { message: { id, type: 'message', role: 'assistant', content: [], model: req.model, stop_reason: null, usage: { input_tokens: 0, output_tokens: 0 } } })));
                   let closed = false;
+                  let messageStarted = false;
+
                   try {
                     for await (const part of stream) {
                       if (signal.aborted) {
                         closed = true;
                         break;
                       }
-                      if (part.type === 'response-metadata') continue;
+
+                      // Skip stream-start events
+                      if (part.type === 'stream-start') continue;
+
+                      // Skip content-part events (inline content not used in Anthropic streaming)
+                      if ((part as any).type === 'content-part') continue;
+
+                      // Use response-metadata to emit message_start
+                      if (part.type === 'response-metadata') {
+                        const line = encoder.encode(part);
+                        if (line) {
+                          messageStarted = true;
+                          ctx.logger.debug(`[API] [anthropic] SSE: ${line.trim()}`);
+                          controller.enqueue(enc.encode(line));
+                        }
+                        continue;
+                      }
+
+                      // If we haven't started yet, generate a synthetic message_start
+                      if (!messageStarted) {
+                        const syntheticStart = encoder.start(
+                          `msg_${crypto.randomUUID().replace(/-/g, '')}`,
+                          req.model
+                        );
+                        ctx.logger.debug(`[API] [anthropic] SSE: ${syntheticStart.trim()}`);
+                        controller.enqueue(enc.encode(syntheticStart));
+                        messageStarted = true;
+                      }
+
                       const line = encoder.encode(part);
                       if (line) {
                         ctx.logger.debug(`[API] [anthropic] SSE: ${line.trim()}`);
                         controller.enqueue(enc.encode(line));
                       }
                     }
+
                     if (!closed) {
+                      // Emit message_stop
+                      if (messageStarted) {
+                        const endEvent = encoder.end();
+                        controller.enqueue(enc.encode(endEvent));
+                      }
                       controller.close();
                       closed = true;
                     }
                   } catch (e: any) {
                     if (!closed) {
+                      // Emit an error event to the client before closing
+                      if (messageStarted) {
+                        try {
+                          const errorEvent = `event: error\ndata: ${JSON.stringify({ type: 'error', error: { type: 'api_error', message: e?.message ?? 'Stream error' } })}\n\n`;
+                          controller.enqueue(enc.encode(errorEvent));
+                        } catch {}
+                      }
                       try { controller.close(); } catch {}
                       closed = true;
                     }
@@ -61,7 +118,14 @@ function createAnthropicEndpoint(options: Record<string, unknown>): Endpoint {
           ctx.logger.debug(`[API] [anthropic] Response:\n${JSON.stringify(encoded, null, 2)}`);
           return c.json(encoded);
         } catch (e: any) {
-          return c.text(e?.message ?? 'Internal Server Error', 500);
+          // Return errors in Anthropic error JSON format
+          return c.json({
+            type: 'error',
+            error: {
+              type: 'api_error',
+              message: e?.message ?? 'Internal Server Error',
+            },
+          }, 500);
         }
       });
 
@@ -84,7 +148,7 @@ const schema: Schema = {
       type: 'string',
       label: 'Base Path',
       description: 'Base path for the API endpoint',
-      default: '/',
+      defaultValue: '/',
       placeholder: '/v1',
     },
   ],

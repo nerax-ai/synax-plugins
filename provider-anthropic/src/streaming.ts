@@ -3,9 +3,9 @@ import type { LanguageStreamPart, FinishReason, LanguageTokenUsage } from '@syna
 interface AnthropicStreamEvent {
   type: string;
   index?: number;
-  delta?: { type: string; text?: string; thinking?: string; partial_json?: string; stop_reason?: string };
-  content_block?: { type: string; id?: string; name?: string; text?: string };
-  message?: { id: string; model: string; usage?: { input_tokens: number; output_tokens: number } };
+  delta?: { type: string; text?: string; thinking?: string; partial_json?: string; stop_reason?: string; stop_sequence?: string | null; signature?: string };
+  content_block?: { type: string; id?: string; name?: string; text?: string; thinking?: string; signature?: string };
+  message?: { id: string; model: string; usage?: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number } };
   usage?: { output_tokens: number };
 }
 
@@ -25,6 +25,10 @@ export class StreamDecoder {
   private responseId: string | undefined;
   private model: string | undefined;
   private started = false;
+  // Capture input tokens from message_start for inclusion in finish event
+  private capturedInputTokens: number | undefined;
+  private capturedCacheRead: number | undefined;
+  private capturedCacheWrite: number | undefined;
 
   *handle(event: AnthropicStreamEvent): Generator<LanguageStreamPart> {
     if (!this.started) {
@@ -36,6 +40,14 @@ export class StreamDecoder {
       if (event.message) {
         this.responseId = event.message.id;
         this.model = event.message.model;
+
+        // Capture input token usage from message_start
+        if (event.message.usage) {
+          this.capturedInputTokens = event.message.usage.input_tokens;
+          this.capturedCacheRead = event.message.usage.cache_read_input_tokens;
+          this.capturedCacheWrite = event.message.usage.cache_creation_input_tokens;
+        }
+
         yield {
           type: 'response-metadata',
           id: event.message.id,
@@ -108,7 +120,12 @@ export class StreamDecoder {
       const delta = event.delta;
 
       const tokenUsage: LanguageTokenUsage = {
-        inputTokens: { total: 0, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
+        inputTokens: {
+          total: this.capturedInputTokens ?? 0,
+          noCache: undefined,
+          cacheRead: this.capturedCacheRead,
+          cacheWrite: this.capturedCacheWrite,
+        },
         outputTokens: {
           total: usage?.output_tokens ?? 0,
           reasoning: undefined,

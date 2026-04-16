@@ -7,10 +7,16 @@ export interface AnthropicProviderConfig {
   headers?: Record<string, string>;
 }
 
+// Cache control type
+export interface AnthropicCacheControl {
+  type?: string;
+}
+
 // Content block types
 export interface AnthropicTextBlock {
   type: 'text';
   text: string;
+  cache_control?: AnthropicCacheControl;
 }
 
 export interface AnthropicImageBlock {
@@ -21,6 +27,7 @@ export interface AnthropicImageBlock {
     data?: string;
     url?: string;
   };
+  cache_control?: AnthropicCacheControl;
 }
 
 export interface AnthropicToolUseBlock {
@@ -33,6 +40,7 @@ export interface AnthropicToolUseBlock {
 export interface AnthropicThinkingBlock {
   type: 'thinking';
   thinking: string;
+  signature?: string;
 }
 
 export interface AnthropicToolResultBlock {
@@ -40,6 +48,7 @@ export interface AnthropicToolResultBlock {
   tool_use_id: string;
   content: string;
   is_error?: boolean;
+  cache_control?: AnthropicCacheControl;
 }
 
 export type AnthropicContentBlock =
@@ -55,11 +64,20 @@ export interface AnthropicMessage {
   content: AnthropicContentBlock[];
 }
 
+// System content block type
+export interface AnthropicSystemBlock {
+  type: 'text';
+  text: string;
+  cache_control?: AnthropicCacheControl;
+}
+
 // Tool types
 export interface AnthropicTool {
   name: string;
   description?: string;
   input_schema?: JSONSchema;
+  cache_control?: AnthropicCacheControl;
+  type?: 'custom' | 'computer_20250124' | 'text_editor_20250124' | 'bash_20250124';
 }
 
 // Tool choice types
@@ -78,7 +96,7 @@ export interface AnthropicThinkingConfig {
 export interface AnthropicMessagesRequest {
   model: string;
   messages: AnthropicMessage[];
-  system?: string;
+  system?: string | AnthropicSystemBlock[];
   max_tokens?: number;
   temperature?: number;
   top_p?: number;
@@ -88,6 +106,10 @@ export interface AnthropicMessagesRequest {
   tool_choice?: AnthropicToolChoice;
   thinking?: AnthropicThinkingConfig;
   stream?: boolean;
+  metadata?: {
+    user_id?: string;
+    [key: string]: unknown;
+  };
 }
 
 // Response type
@@ -98,10 +120,12 @@ export interface AnthropicMessagesResponse {
   model: string;
   content: AnthropicContentBlock[];
   stop_reason: 'end_turn' | 'max_tokens' | 'stop_sequence' | 'tool_use' | null;
+  stop_sequence: string | null;
   usage?: {
     input_tokens: number;
     output_tokens: number;
     cache_read_input_tokens?: number;
     cache_creation_input_tokens?: number;
+    [key: string]: unknown;
   };
 }

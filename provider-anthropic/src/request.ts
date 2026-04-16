@@ -10,7 +10,7 @@ import type {
   LanguageAssistantMessage,
   LanguageFunctionTool,
 } from '@synax-ai/sdk';
-import type { AnthropicMessagesRequest, AnthropicContentBlock, AnthropicMessage, AnthropicTool, AnthropicToolChoice, AnthropicThinkingConfig } from './types';
+import type { AnthropicMessagesRequest, AnthropicContentBlock, AnthropicMessage, AnthropicTool, AnthropicToolChoice, AnthropicThinkingConfig, AnthropicSystemBlock } from './types';
 
 function isTextContent(part: unknown): part is LanguageTextContent {
   return typeof part === 'object' && part !== null && (part as LanguageTextContent).type === 'text';
@@ -22,31 +22,37 @@ function isFileContent(part: unknown): part is LanguageFileContent {
 
 function encodeContentPart(part: LanguageTextContent | LanguageFileContent): AnthropicContentBlock {
   if (part.type === 'text') {
-    return { type: 'text', text: part.text };
+    const block: AnthropicContentBlock = { type: 'text', text: part.text };
+    if (part.cacheControl) block.cache_control = part.cacheControl;
+    return block;
   }
   if (part.type === 'file') {
     let data: string;
     const mediaType = part.mediaType;
 
     if (part.data instanceof URL) {
-      return {
+      const block: AnthropicContentBlock = {
         type: 'image',
         source: {
           type: 'url',
           url: part.data.toString(),
         },
       };
+      if (part.cacheControl) block.cache_control = part.cacheControl;
+      return block;
     }
 
     if (typeof part.data === 'string') {
       if (part.data.startsWith('http://') || part.data.startsWith('https://')) {
-        return {
+        const block: AnthropicContentBlock = {
           type: 'image',
           source: {
             type: 'url',
             url: part.data,
           },
         };
+        if (part.cacheControl) block.cache_control = part.cacheControl;
+        return block;
       }
       data = part.data;
     } else if (part.data instanceof Uint8Array) {
@@ -55,7 +61,7 @@ function encodeContentPart(part: LanguageTextContent | LanguageFileContent): Ant
       data = String(part.data);
     }
 
-    return {
+    const block: AnthropicContentBlock = {
       type: 'image',
       source: {
         type: 'base64',
@@ -63,6 +69,8 @@ function encodeContentPart(part: LanguageTextContent | LanguageFileContent): Ant
         data,
       },
     };
+    if (part.cacheControl) block.cache_control = part.cacheControl;
+    return block;
   }
 
   return { type: 'text', text: '' };
@@ -97,17 +105,18 @@ function encodeThinking(reasoning: LanguageReasoningConfig): AnthropicThinkingCo
   return { type: 'enabled', budget_tokens: budgetMap[effort] };
 }
 
-export function encodeMessages(messages: LanguageMessage[]): { messages: AnthropicMessage[]; system: string | undefined } {
+export function encodeMessages(messages: LanguageMessage[]): { messages: AnthropicMessage[]; system: AnthropicSystemBlock[] | undefined } {
   const result: AnthropicMessage[] = [];
-  const systemParts: string[] = [];
+  const systemParts: AnthropicSystemBlock[] = [];
 
   for (const msg of messages) {
     if (msg.role === 'system') {
-      // System message content is an array of LanguageTextContent
       if (Array.isArray(msg.content)) {
         for (const part of msg.content) {
           if (part.type === 'text' && part.text) {
-            systemParts.push(part.text);
+            const sysBlock: AnthropicSystemBlock = { type: 'text', text: part.text };
+            if (part.cacheControl) sysBlock.cache_control = part.cacheControl;
+            systemParts.push(sysBlock);
           }
         }
       }
@@ -141,17 +150,27 @@ export function encodeMessages(messages: LanguageMessage[]): { messages: Anthrop
 
       for (const part of contentArray) {
         if (isTextContent(part)) {
-          content.push({ type: 'text', text: part.text });
+          const block: AnthropicContentBlock = { type: 'text', text: part.text };
+          if (part.cacheControl) block.cache_control = part.cacheControl;
+          content.push(block);
         } else if (part.type === 'reasoning') {
           const reasoningText = typeof part.reasoning === 'string' ? part.reasoning : '';
-          content.push({ type: 'thinking', thinking: reasoningText });
+          const thinkingBlock: AnthropicContentBlock = { type: 'thinking', thinking: reasoningText };
+          // Preserve signature if present in providerMetadata
+          const reasoningPart = part as any;
+          if (reasoningPart.signature) thinkingBlock.signature = reasoningPart.signature;
+          content.push(thinkingBlock);
         } else if (part.type === 'tool-call') {
           const tc = part as LanguageToolCallContent;
+          let parsedInput = tc.input;
+          if (typeof tc.input === 'string') {
+            try { parsedInput = JSON.parse(tc.input); } catch { parsedInput = {}; }
+          }
           content.push({
             type: 'tool_use',
             id: tc.toolCallId,
             name: tc.toolName,
-            input: typeof tc.input === 'string' ? JSON.parse(tc.input) : tc.input,
+            input: parsedInput,
           });
         }
       }
@@ -163,36 +182,46 @@ export function encodeMessages(messages: LanguageMessage[]): { messages: Anthrop
     }
 
     if (msg.role === 'tool') {
+      // Group all tool results into a single user message (Anthropic expects this)
+      const toolResultBlocks: AnthropicContentBlock[] = [];
       for (const part of msg.content) {
         if (part.type === 'tool-result') {
-          const tr = part;
+          const tr = part as any;
           let outputContent: string;
 
-          if (tr.result.type === 'text' || tr.result.type === 'error-text') {
-            outputContent = String(tr.result.value);
-          } else if (tr.result.type === 'json' || tr.result.type === 'error-json') {
-            outputContent = JSON.stringify(tr.result.value);
-          } else if (tr.result.type === 'content') {
-            outputContent = tr.result.value.filter(isTextContent).map(p => p.text).join('');
+          const trResult = tr.result;
+          if (trResult.type === 'text' || trResult.type === 'error-text') {
+            outputContent = String(trResult.value ?? '');
+          } else if (trResult.type === 'json' || trResult.type === 'error-json') {
+            outputContent = JSON.stringify(trResult.value);
+          } else if (trResult.type === 'content') {
+            outputContent = trResult.value
+              .map((p: any) => {
+                if (isTextContent(p)) return p.text;
+                if (isFileContent(p)) return '[file]';
+                return '';
+              })
+              .filter(Boolean)
+              .join('');
           } else {
             outputContent = '';
           }
 
-          result.push({
-            role: 'user',
-            content: [{
-              type: 'tool_result',
-              tool_use_id: tr.toolCallId,
-              content: outputContent,
-              is_error: tr.isError,
-            }],
+          toolResultBlocks.push({
+            type: 'tool_result',
+            tool_use_id: tr.toolCallId,
+            content: outputContent,
+            is_error: tr.isError,
           });
         }
+      }
+      if (toolResultBlocks.length > 0) {
+        result.push({ role: 'user', content: toolResultBlocks });
       }
     }
   }
 
-  const system = systemParts.length > 0 ? systemParts.join('\n\n') : undefined;
+  const system = systemParts.length > 0 ? systemParts : undefined;
 
   return { messages: result, system };
 }
@@ -200,11 +229,17 @@ export function encodeMessages(messages: LanguageMessage[]): { messages: Anthrop
 function encodeTool(tool: LanguageTool): AnthropicTool | undefined {
   if (tool.type !== 'function') return undefined;
   const funcTool = tool as LanguageFunctionTool;
-  return {
+  const encoded: AnthropicTool = {
     name: funcTool.name,
     description: funcTool.description,
     input_schema: funcTool.inputSchema,
   };
+  // Note: LanguageFunctionTool doesn't have cacheControl in the SDK type.
+  // If providerOptions contains cache_control, pass it through.
+  if (funcTool.providerOptions?.cache_control) {
+    encoded.cache_control = funcTool.providerOptions.cache_control as any;
+  }
+  return encoded;
 }
 
 export function encodeTools(tools: LanguageTool[] | undefined): AnthropicTool[] | undefined {
@@ -216,8 +251,9 @@ export function encodeToolChoice(choice: LanguageRequest['toolChoice']): Anthrop
   if (!choice) return undefined;
 
   if (choice === 'auto') return { type: 'auto' };
-  if (choice === 'none') return { type: 'any' };
   if (choice === 'required') return { type: 'any' };
+  // 'none' means don't set tool_choice at all
+  if (choice === 'none') return undefined;
 
   if (typeof choice === 'object' && choice.type === 'function') {
     return { type: 'tool', name: choice.function.name };
@@ -247,6 +283,7 @@ export function encodeRequest(request: LanguageRequest): AnthropicMessagesReques
   if (tools) encoded.tools = tools;
   if (toolChoice) encoded.tool_choice = toolChoice;
   if (thinking) encoded.thinking = thinking;
+  if (request.extra?.metadata) encoded.metadata = request.extra.metadata as AnthropicMessagesRequest['metadata'];
 
   return encoded;
 }

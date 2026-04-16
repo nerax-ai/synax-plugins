@@ -130,32 +130,36 @@ export async function* streamRequest(
   let buffer = '';
   let currentEvent = '';
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() ?? '';
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
 
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
 
-      logger.debug(`[HTTP] [${id}] Stream line:\n${formatBody(trimmed)}`);
+        logger.debug(`[HTTP] [${id}] Stream line:\n${formatBody(trimmed)}`);
 
-      if (trimmed.startsWith('event: ')) {
-        currentEvent = trimmed.slice(7);
-      } else if (trimmed.startsWith('data: ')) {
-        const dataStr = trimmed.slice(6);
-        try {
-          const data = JSON.parse(dataStr);
-          yield { event: currentEvent, data };
-          currentEvent = '';
-        } catch {
-          // Skip invalid JSON
+        if (trimmed.startsWith('event: ')) {
+          currentEvent = trimmed.slice(7);
+        } else if (trimmed.startsWith('data: ')) {
+          const dataStr = trimmed.slice(6);
+          try {
+            const data = JSON.parse(dataStr);
+            yield { event: currentEvent, data };
+            currentEvent = '';
+          } catch {
+            // Skip invalid JSON
+          }
         }
       }
     }
+  } finally {
+    reader.releaseLock();
   }
 }

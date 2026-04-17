@@ -68,16 +68,22 @@ export function createHttpClient(id: string, logger: Logger, config: HttpClientC
       throw new Error(`HTTP ${response.status}: ${errorMessage}`);
     }
 
-    // Try to parse as JSON and check for error in body (some APIs return 200 with error)
+    // Try to parse as JSON directly
     let data: T;
     try {
       data = JSON.parse(responseText) as T;
-    } catch (e) {
-      throw new Error(`Failed to parse JSON response: ${responseText.substring(0, 200)}`);
+    } catch {
+      // If the upstream returns SSE despite stream:false, reconstruct from events
+      const reconstructed = reconstructFromSSE(responseText);
+      if (reconstructed) {
+        data = reconstructed as T;
+      } else {
+        throw new Error(`Failed to parse JSON response: ${responseText.substring(0, 200)}`);
+      }
     }
 
-    // Check for error field in response body
-    if (data && typeof data === 'object' && 'error' in data) {
+    // Check for error field in response body (skip when error is null/undefined)
+    if (data && typeof data === 'object' && 'error' in data && (data as any).error) {
       const errorObj = (data as any).error;
       const errorMessage = errorObj?.message || errorObj?.type || JSON.stringify(errorObj);
       throw new Error(`API Error: ${errorMessage}`);
@@ -159,4 +165,70 @@ export async function* streamRequest(
       }
     }
   }
+}
+
+/**
+ * Reconstruct an OpenAI Responses response object from SSE text.
+ * Used when the upstream returns SSE despite stream:false.
+ */
+function reconstructFromSSE(sseText: string): unknown | null {
+  const outputItems: any[] = [];
+  const textBuffers = new Map<string, string>();
+  const toolBuffers = new Map<string, string>();
+  let completedResponse: any = null;
+
+  for (const line of sseText.split('\n')) {
+    if (!line.startsWith('data: ')) continue;
+    const text = line.slice(6).trim();
+    if (!text) continue;
+    let event: any;
+    try { event = JSON.parse(text); } catch { continue; }
+
+    const type = event.type;
+
+    if (type === 'response.output_item.added' && event.item) {
+      const item = event.item;
+      if (item.type === 'message') {
+        outputItems.push({ ...item, content: [{ type: 'output_text', text: '' }] });
+      } else if (item.type === 'function_call') {
+        outputItems.push({ ...item });
+        toolBuffers.set(item.id, '');
+      } else {
+        outputItems.push({ ...item });
+      }
+    }
+
+    if (type === 'response.output_text.delta') {
+      const buf = textBuffers.get(event.item_id) ?? '';
+      textBuffers.set(event.item_id, buf + event.delta);
+    }
+
+    if (type === 'response.function_call_arguments.delta') {
+      const buf = toolBuffers.get(event.item_id) ?? '';
+      toolBuffers.set(event.item_id, buf + event.delta);
+    }
+
+    if (type === 'response.output_item.done' && event.item) {
+      const item = event.item;
+      const idx = outputItems.findIndex((o: any) => o.id === item.id);
+      if (idx !== -1) {
+        if (item.type === 'message') {
+          outputItems[idx] = { ...item, content: [{ type: 'output_text', text: textBuffers.get(item.id) ?? '' }] };
+        } else if (item.type === 'function_call') {
+          outputItems[idx] = { ...item, arguments: toolBuffers.get(item.id) ?? item.arguments ?? '' };
+        } else {
+          outputItems[idx] = item;
+        }
+      }
+    }
+
+    if (type === 'response.completed' && event.response) {
+      completedResponse = event.response;
+    }
+  }
+
+  if (completedResponse) {
+    return { ...completedResponse, output: outputItems };
+  }
+  return null;
 }

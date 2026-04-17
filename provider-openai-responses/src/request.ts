@@ -58,20 +58,50 @@ function encodeReasoning(reasoning: LanguageReasoningConfig): ResponsesReasoning
   return { effort };
 }
 
+function isDeveloperMessage(msg: LanguageMessage): boolean {
+  return msg.role === 'system' && (msg as any).providerMetadata?.openai?.originalRole === 'developer';
+}
+
+function extractTextContent(msg: LanguageMessage): string {
+  if (typeof msg.content === 'string') return msg.content;
+  if (Array.isArray(msg.content)) {
+    return msg.content
+      .filter(isTextContent)
+      .map(p => p.text)
+      .join('');
+  }
+  return '';
+}
+
 export function encodeInput(messages: LanguageMessage[]): { input: ResponsesInputItem[]; instructions?: string } {
   const input: ResponsesInputItem[] = [];
   let instructions: string | undefined;
 
-  // Extract system messages as instructions
-  const systemMessages = messages.filter(m => m.role === 'system');
-  if (systemMessages.length > 0) {
-    instructions = systemMessages
-      .map(m => typeof m.content === 'string' ? m.content : '')
-      .join('\n\n');
+  // Separate: system messages (→ instructions) vs developer messages (→ input with role:'developer')
+  const systemTexts: string[] = [];
+  for (const msg of messages) {
+    if (msg.role === 'system' && !isDeveloperMessage(msg)) {
+      systemTexts.push(extractTextContent(msg));
+    }
+  }
+  if (systemTexts.length > 0) {
+    instructions = systemTexts.join('\n\n');
   }
 
   for (const msg of messages) {
-    if (msg.role === 'system') continue;
+    // Skip non-developer system messages (they go to instructions)
+    if (msg.role === 'system' && !isDeveloperMessage(msg)) continue;
+
+    // Developer messages: emit as input items with role:'developer'
+    if (isDeveloperMessage(msg)) {
+      const text = extractTextContent(msg);
+      input.push({
+        type: 'message',
+        role: 'developer',
+        content: [{ type: 'input_text', text }],
+      });
+      continue;
+    }
 
     if (msg.role === 'user') {
       const userMsg = msg as LanguageUserMessage;
@@ -160,6 +190,7 @@ function encodeTool(tool: LanguageTool): { type: 'function'; name: string; descr
 
 export function encodeRequest(request: LanguageRequest): OpenAIResponsesRequest {
   const { input, instructions } = encodeInput(request.messages);
+  const openaiOpts = (request as any).providerOptions?.openai as Record<string, any> | undefined;
 
   const encoded: OpenAIResponsesRequest = {
     model: request.model,
@@ -167,10 +198,17 @@ export function encodeRequest(request: LanguageRequest): OpenAIResponsesRequest 
     stream: true,
   };
 
-  if (instructions) encoded.instructions = instructions;
+  // Instructions: prefer providerOptions.openai.instructions, fall back to system messages
+  const effectiveInstructions = openaiOpts?.instructions ?? instructions;
+  if (effectiveInstructions) encoded.instructions = effectiveInstructions;
+
   if (request.maxOutputTokens) encoded.max_output_tokens = request.maxOutputTokens;
   if (request.temperature !== undefined) encoded.temperature = request.temperature;
   if (request.topP !== undefined) encoded.top_p = request.topP;
+  if ((request as any).frequencyPenalty !== undefined) encoded.frequency_penalty = (request as any).frequencyPenalty;
+  if ((request as any).presencePenalty !== undefined) encoded.presence_penalty = (request as any).presencePenalty;
+  if ((request as any).seed !== undefined) encoded.seed = (request as any).seed;
+  if ((request as any).stopSequences !== undefined) encoded.stop = (request as any).stopSequences;
 
   if (request.tools && request.tools.length > 0) {
     encoded.tools = request.tools.map(encodeTool).filter((t): t is NonNullable<ReturnType<typeof encodeTool>> => t !== undefined);
@@ -186,7 +224,14 @@ export function encodeRequest(request: LanguageRequest): OpenAIResponsesRequest 
 
   if (request.reasoning?.enabled) {
     encoded.reasoning = encodeReasoning(request.reasoning);
+  } else if (openaiOpts?.reasoning) {
+    encoded.reasoning = openaiOpts.reasoning;
   }
+
+  // Forward provider-specific options
+  if (openaiOpts?.parallelToolCalls !== undefined) encoded.parallel_tool_calls = openaiOpts.parallelToolCalls;
+  if (openaiOpts?.store !== undefined) encoded.store = openaiOpts.store;
+  if (openaiOpts?.include) encoded.include = openaiOpts.include;
 
   return encoded;
 }

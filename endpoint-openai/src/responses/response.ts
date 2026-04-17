@@ -3,6 +3,7 @@ import type { LanguageResponse, LanguageToolCallContent } from '@synax-ai/sdk';
 function encodeFinishReason(r: string | null): string {
   if (r === 'tool-calls') return 'tool_calls';
   if (r === 'length') return 'max_output_tokens';
+  if (r === 'content-filter') return 'content_filter';
   return 'stop';
 }
 
@@ -28,19 +29,28 @@ export function encodeResponse(res: LanguageResponse, inputTokens: number): any 
       }
       else if (p.type === 'tool-call') {
         const tc = p as LanguageToolCallContent;
-        toolCalls.push({ type: 'function_call', id: `fc_${tc.toolCallId}`, call_id: tc.toolCallId, name: tc.toolName, arguments: typeof tc.input === 'string' ? tc.input : JSON.stringify(tc.input) });
+        toolCalls.push({ type: 'function_call', id: tc.toolCallId, call_id: tc.toolCallId, name: tc.toolName, arguments: typeof tc.input === 'string' ? tc.input : JSON.stringify(tc.input) });
       }
     }
   }
 
   if (reasoningContent) {
-    output.push({ type: 'reasoning', id: `rs_${res.id}`, encrypted_content: reasoningContent, status: 'completed' });
+    output.push({ type: 'reasoning', id: res.id, encrypted_content: reasoningContent, status: 'completed' });
   }
 
   if (textParts.length) {
-    output.push({ type: 'message', id: `msg_${res.id}`, role: 'assistant', content: [{ type: 'output_text', text: textParts.join('') }], status: 'completed' });
+    output.push({ type: 'message', id: res.id, role: 'assistant', content: [{ type: 'output_text', text: textParts.join('') }], status: 'completed' });
   }
   output.push(...toolCalls);
+
+  const usage: any = {
+    input_tokens: inputTokens,
+    output_tokens: res.usage?.outputTokens.total ?? 0,
+    total_tokens: inputTokens + (res.usage?.outputTokens.total ?? 0),
+  };
+  if (res.usage?.outputTokens.reasoning !== undefined) {
+    usage.output_tokens_details = { reasoning_tokens: res.usage.outputTokens.reasoning };
+  }
 
   return {
     id: res.id,
@@ -50,10 +60,6 @@ export function encodeResponse(res: LanguageResponse, inputTokens: number): any 
     output,
     status: 'completed',
     stop_reason: encodeFinishReason(choice?.finishReason ?? null),
-    usage: {
-      input_tokens: inputTokens,
-      output_tokens: res.usage?.outputTokens.total ?? 0,
-      total_tokens: inputTokens + (res.usage?.outputTokens.total ?? 0),
-    },
+    usage,
   };
 }

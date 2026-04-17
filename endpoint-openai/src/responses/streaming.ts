@@ -3,6 +3,7 @@ import type { LanguageStreamPart } from '@synax-ai/sdk';
 function encodeFinishReason(r: string | null): string {
   if (r === 'tool-calls') return 'tool_calls';
   if (r === 'length') return 'max_output_tokens';
+  if (r === 'content-filter') return 'content_filter';
   return 'stop';
 }
 
@@ -34,7 +35,10 @@ export class StreamEncoder {
       const item = { id: part.id, type: 'reasoning', encrypted_content: '', status: 'in_progress' };
       return sse('response.output_item.added', { output_index: idx, item });
     }
-    if (part.type === 'reasoning-delta') return null;
+    if (part.type === 'reasoning-delta') {
+      const idx = this.idToIndex.get(part.id) ?? 0;
+      return sse('response.reasoning.delta', { item_id: part.id, output_index: idx, delta: part.delta });
+    }
     if (part.type === 'reasoning-end') {
       const idx = this.idToIndex.get(part.id) ?? 0;
       const item = { id: part.id, type: 'reasoning', status: 'completed' };
@@ -78,7 +82,7 @@ export class StreamEncoder {
       return sse('response.function_call_arguments.delta', { item_id: part.id, output_index: idx, delta: part.delta });
     }
     if (part.type === 'tool-input-end') {
-      const idx = this.idToIndex.get(part.id) ?? 1;
+      const idx = this.idToIndex.get(part.id) ?? 0;
       const args = this.toolArguments.get(part.id) ?? '';
       const name = this.toolNames.get(part.id) ?? '';
       const item = { id: part.id, type: 'function_call', call_id: part.id, name, arguments: args, status: 'completed' };
@@ -86,15 +90,19 @@ export class StreamEncoder {
     }
 
     if (part.type === 'finish') {
+      const usage: any = {
+        input_tokens: part.usage?.inputTokens.total ?? 0,
+        output_tokens: part.usage?.outputTokens.total ?? 0,
+        total_tokens: (part.usage?.inputTokens.total ?? 0) + (part.usage?.outputTokens.total ?? 0),
+      };
+      if (part.usage?.outputTokens.reasoning !== undefined) {
+        usage.output_tokens_details = { reasoning_tokens: part.usage.outputTokens.reasoning };
+      }
       return sse('response.completed', {
         response: {
           id, object: 'response', created_at: Math.floor(Date.now() / 1000), model, status: 'completed',
           stop_reason: encodeFinishReason(part.finishReason ?? null),
-          usage: {
-            input_tokens: part.usage?.inputTokens.total ?? 0,
-            output_tokens: part.usage?.outputTokens.total ?? 0,
-            total_tokens: (part.usage?.inputTokens.total ?? 0) + (part.usage?.outputTokens.total ?? 0),
-          },
+          usage,
         },
       });
     }

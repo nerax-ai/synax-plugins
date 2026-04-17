@@ -12,6 +12,7 @@ function decodeFinishReason(reason: string | undefined): FinishReason {
   if (reason === 'stop' || reason === 'end_turn') return 'stop';
   if (reason === 'max_tokens' || reason === 'max_output_tokens') return 'length';
   if (reason === 'tool_calls' || reason === 'tool_use') return 'tool-calls';
+  if (reason === 'content_filter') return 'content-filter';
   return null;
 }
 
@@ -61,6 +62,16 @@ export class StreamDecoder {
       yield { type: 'tool-input-delta', id: item_id, delta };
     }
 
+    if (event === 'response.reasoning.delta') {
+      const rd = data as { item_id: string; delta: string };
+      yield { type: 'reasoning-delta', id: rd.item_id, delta: rd.delta };
+    }
+
+    if (event === 'response.reasoning_summary_text.delta') {
+      const rd = data as { item_id: string; delta: string };
+      yield { type: 'reasoning-delta', id: rd.item_id, delta: rd.delta };
+    }
+
     if (event === 'response.output_item.done') {
       const { item } = data as ResponseOutputItemDoneEvent;
 
@@ -69,9 +80,11 @@ export class StreamDecoder {
       } else if (item.type === 'function_call') {
         yield { type: 'tool-input-end', id: item.id };
       } else if (item.type === 'reasoning') {
-        const summary = item.summary?.map(s => s.text).join('\n') ?? '';
-        if (summary) {
-          yield { type: 'reasoning-delta', id: item.id, delta: summary };
+        const reasoningText = item.summary?.map(s => s.text).join('\n')
+          || (item as any).encrypted_content
+          || '';
+        if (reasoningText) {
+          yield { type: 'reasoning-delta', id: item.id, delta: reasoningText };
         }
         yield { type: 'reasoning-end', id: item.id };
       }

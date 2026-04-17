@@ -34,7 +34,9 @@ function decodeOutputItem(item: ResponsesOutputItem): Array<LanguageTextContent 
       input: item.arguments,
     });
   } else if (item.type === 'reasoning') {
-    const reasoningText = item.summary?.map(s => s.text).join('\n') ?? '';
+    const reasoningText = item.summary?.map(s => s.text).join('\n')
+      || item.encrypted_content
+      || '';
     result.push({ type: 'reasoning', reasoning: reasoningText });
   }
 
@@ -71,7 +73,7 @@ export function decodeResponse(response: OpenAIResponsesResponse): LanguageRespo
 
   return {
     id: response.id,
-    created: Math.floor(response.created_at / 1000),
+    created: response.created_at,
     model: response.model,
     choices: [{
       index: 0,

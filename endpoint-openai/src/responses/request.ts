@@ -35,8 +35,10 @@ function decodeInput(input: any): LanguageMessage[] {
     }
 
     if (type === 'message' || role) {
-      const normalizedRole = role === 'developer' ? 'system' : role;
+      const isDeveloper = role === 'developer';
+      const normalizedRole = isDeveloper ? 'system' : role;
 
+      let msg: any;
       if (Array.isArray(content)) {
         const parts = content
           .filter((p: any) => (p.type === 'input_text' || p.type === 'output_text') && p.text)
@@ -46,9 +48,16 @@ function decodeInput(input: any): LanguageMessage[] {
           return null as any;
         }
 
-        return { role: normalizedRole, content: parts };
+        msg = { role: normalizedRole, content: parts };
+      } else {
+        msg = { role: normalizedRole, content: [{ type: 'text' as const, text: String(content || '') }] };
       }
-      return { role: normalizedRole, content: [{ type: 'text' as const, text: String(content || '') }] };
+
+      if (isDeveloper) {
+        msg.providerMetadata = { openai: { originalRole: 'developer' } };
+      }
+
+      return msg;
     }
     return { role: 'user', content: [{ type: 'text' as const, text: '' }] };
   }).filter((msg): msg is LanguageMessage => msg !== null);
@@ -62,8 +71,6 @@ export function decodeRequest(body: any): LanguageRequest {
     }
     return result;
   });
-
-  const hasDeveloperRole = body.input?.some((item: any) => item.role === 'developer');
 
   const req: any = {
     model: body.model,
@@ -88,7 +95,6 @@ export function decodeRequest(body: any): LanguageRequest {
   if (body.store !== undefined) openaiOptions.store = body.store;
   if (body.include) openaiOptions.include = body.include;
   if (body.prompt_cache_key) openaiOptions.promptCacheKey = body.prompt_cache_key;
-  if (hasDeveloperRole) openaiOptions.systemMessageMode = 'developer';
 
   if (Object.keys(openaiOptions).length > 0) {
     req.providerOptions = { openai: openaiOptions };

@@ -9,7 +9,7 @@ export interface OpenAIResponsesProviderConfig {
 
 // Input item types
 export type ResponsesInputItem =
-  | { type: 'message'; role: 'system' | 'user' | 'assistant'; content: ResponsesContentPart[] }
+  | { type: 'message'; role: 'system' | 'developer' | 'user' | 'assistant'; content: ResponsesContentPart[] }
   | { type: 'function_call'; call_id: string; name: string; arguments: string }
   | { type: 'function_call_output'; call_id: string; output: string };
 
@@ -40,11 +40,18 @@ export interface OpenAIResponsesRequest {
   max_output_tokens?: number;
   temperature?: number;
   top_p?: number;
+  frequency_penalty?: number;
+  presence_penalty?: number;
+  seed?: number;
+  stop?: string[];
   tools?: Array<{ type: 'function'; name: string; description?: string; parameters?: JSONSchema }>;
   tool_choice?: 'none' | 'auto' | 'required' | { type: 'function'; name: string };
   reasoning?: ResponsesReasoningConfig;
   stream?: boolean;
   include?: string[];
+  parallel_tool_calls?: boolean;
+  store?: boolean;
+  metadata?: Record<string, string>;
 }
 
 export interface OpenAIResponsesResponse {
